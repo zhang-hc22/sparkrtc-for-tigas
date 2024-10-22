@@ -1,3 +1,12 @@
+# Libx264 branch
+
+This branch is created because we got some issues about libx264 involvement in main branch. Now it is included, but not used as a default. It also should be built from another source and versions are lack of control.
+
+So in this branch I'll:
+- Add submodule for x264;
+- Add compiling options to select from openh264, libx264 and default vp8;
+
+
 # SparkRTC
 
 SparkRTC is built on WebRTC.
