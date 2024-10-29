@@ -8,7 +8,7 @@ So in this branch I'll:
 
 # Temporary solutions for now
 
-1. Checkout this brench
+1. Checkout this branch
 2. Get the code and match the versions of headers:
 ```
 git clone https://code.videolan.org/videolan/x264.git
