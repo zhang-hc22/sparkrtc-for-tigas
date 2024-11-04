@@ -14,7 +14,7 @@
 // #ifdef unless needed and tested.
 // #ifdef WEBRTC_USE_H264
 
-#include "modules/video_coding/codecs/h264/h264_encoder_impl.h"
+#include "modules/video_coding/codecs/h264/x264_encoder_impl.h"
 
 #include <algorithm>
 #include <limits>

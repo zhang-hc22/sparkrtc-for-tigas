@@ -1,10 +1,34 @@
 # Libx264 branch
 
-This branch is created because we got some issues about libx264 involvement in main branch. Now it is included, but not used as a default. It also should be built from another source and versions are lack of control.
+<!-- This branch is created because we got some issues about libx264 involvement in main branch. Now it is included, but not used as a default. It also should be built from another source and versions are lack of control.
 
 So in this branch I'll:
 - Add submodule for x264;
-- Add compiling options to select from openh264, libx264 and default vp8;
+- Add compiling options to select from openh264, libx264 and default vp8; -->
+Now you can build sparkrtc without libx264.
+
+Openh264 will be built but not selected. VP8 will be selected as the default encoder and decoder,  if you want to use H264, you should adjust the codec priorities in conductor.cc in peerconnection examples.
+
+For H264, we by default use openh264 for h264 encoder. 
+
+If you want to use x264:
+
+1. Turn on "spark_use_x264" to switch to x264 encoder like this:
+
+```
+gn gen out/t --args="spark_use_x264=true"
+```
+
+2. Get libx264 lib and make sure the path in video_codec/BUILD.gn is right.
+
+```
+libs = ["path/to/x264/libx264.a"]
+```
+
+## Todos:
+
+- add x264 as submodule
+- see if we can build it with depot_tools for convenience.
 
 
 # SparkRTC

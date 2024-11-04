@@ -461,14 +461,25 @@ rtc_library("webrtc_h264") {
     "codecs/h264/h264_color_space.h",
     "codecs/h264/h264_decoder_impl.cc",
     "codecs/h264/h264_decoder_impl.h",
-    "codecs/h264/h264_encoder_impl.cc",
-    "codecs/h264/h264_encoder_impl.h",
     "codecs/h264/include/h264.h",
-    # "codecs/h264/include/x264.h",
   ]
 
-  
-  # libs = ["/Users/bytedance/x264/libx264.a"]
+  if(spark_use_x264) {
+    sources += [
+      "codecs/h264/include/x264.h",
+      "codecs/h264/x264_encoder_impl.cc",
+      "codecs/h264/x264_encoder_impl.h",
+    ]
+    libs = ["path/to/x264/libx264.a"]
+  }
+  else {
+    sources += [
+      "codecs/h264/h264_encoder_impl.cc",
+      "codecs/h264/h264_encoder_impl.h",
+    ]
+  }
+
+     
 
 
   defines = []
