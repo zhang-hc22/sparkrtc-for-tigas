@@ -464,11 +464,11 @@ rtc_library("webrtc_h264") {
     "codecs/h264/h264_encoder_impl.cc",
     "codecs/h264/h264_encoder_impl.h",
     "codecs/h264/include/h264.h",
-    "codecs/h264/include/x264.h",
+    # "codecs/h264/include/x264.h",
   ]
 
   
-  libs = ["/Users/bytedance/x264/libx264.a"]
+  # libs = ["/Users/bytedance/x264/libx264.a"]
 
 
   defines = []

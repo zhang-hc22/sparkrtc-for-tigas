@@ -15,7 +15,7 @@
 // Everything declared in this header is only required when WebRTC is
 // build with H264 support, please do not move anything out of the
 // #ifdef unless needed and tested.
-// #ifdef WEBRTC_USE_H264
+#ifdef WEBRTC_USE_H264
 
 #if defined(WEBRTC_WIN) && !defined(__clang__)
 #error "See: bugs.webrtc.org/9213#c13."
@@ -34,11 +34,8 @@
 #include "modules/video_coding/codecs/h264/include/h264.h"
 #include "modules/video_coding/svc/scalable_video_controller.h"
 #include "modules/video_coding/utility/quality_scaler.h"
-// #include "third_party/openh264/src/codec/api/wels/codec_app_def.h"
+#include "third_party/openh264/src/codec/api/wels/codec_app_def.h"
 
-#include "modules/video_coding/codecs/h264/include/x264.h"
-#include "modules/video_coding/codecs/h264/include/x264_config.h"
-// #include "rtc_base/scoped_ptr.h"
 class ISVCEncoder;
 
 namespace webrtc {
@@ -65,8 +62,8 @@ class H264EncoderImpl : public H264Encoder {
   explicit H264EncoderImpl(const cricket::VideoCodec& codec);
   ~H264EncoderImpl() override;
 
-  // |max_payload_size| is ignored.
-  // The following members of |codec_settings| are used. The rest are ignored.;
+  // `settings.max_payload_size` is ignored.
+  // The following members of `codec_settings` are used. The rest are ignored.
   // - codecType (must be kVideoCodecH264)
   // - targetBitrate
   // - maxFramerate
@@ -83,9 +80,9 @@ class H264EncoderImpl : public H264Encoder {
   // The result of encoding - an EncodedImage and CodecSpecificInfo - are
   // passed to the encode complete callback.
   int32_t Encode(const VideoFrame& frame,
-                                  const std::vector<VideoFrameType>* frame_types) override;
+                 const std::vector<VideoFrameType>* frame_types) override;
 
-EncoderInfo GetEncoderInfo() const override;
+  EncoderInfo GetEncoderInfo() const override;
 
   // Exposed for testing.
   H264PacketizationMode PacketizationModeForTesting() const {
@@ -93,17 +90,15 @@ EncoderInfo GetEncoderInfo() const override;
   }
 
  private:
-  // SEncParamExt CreateEncoderParams(size_t i) const;
+  SEncParamExt CreateEncoderParams(size_t i) const;
 
   webrtc::H264BitstreamParser h264_bitstream_parser_;
   // Reports statistics with histograms.
   void ReportInit();
   void ReportError();
 
-  VideoCodec codec_settings_;
-
-  // std::vector<ISVCEncoder*> encoders_;
-  // std::vector<SSourcePicture> pictures_;
+  std::vector<ISVCEncoder*> encoders_;
+  std::vector<SSourcePicture> pictures_;
   std::vector<rtc::scoped_refptr<I420Buffer>> downscaled_buffers_;
   std::vector<LayerConfig> configurations_;
   std::vector<EncodedImage> encoded_images_;
@@ -116,25 +111,16 @@ EncoderInfo GetEncoderInfo() const override;
   size_t max_payload_size_;
   int32_t number_of_cores_;
   absl::optional<int> encoder_thread_limit_;
-
-  EncodedImage encoded_image_;
-  // rtc::scoped_ptr<uint8_t[]> encoded_image_buffer_;
   EncodedImageCallback* encoded_image_callback_;
+
   bool has_reported_init_;
   bool has_reported_error_;
 
   std::vector<uint8_t> tl0sync_limit_;
-  bool inited_;
-  x264_picture_t pic_;
-  x264_picture_t pic_out_;
-  x264_t *encoder_;
-  // int i_frame = 0;//frame index
-  x264_nal_t *nal_t_;
-  x264_param_t param_;
 };
 
 }  // namespace webrtc
 
-// #endif  // WEBRTC_USE_H264
+#endif  // WEBRTC_USE_H264
 
 #endif  // MODULES_VIDEO_CODING_CODECS_H264_H264_ENCODER_IMPL_H_
