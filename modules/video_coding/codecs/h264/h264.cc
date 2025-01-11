@@ -22,7 +22,11 @@
 
 #if defined(WEBRTC_USE_H264)
 #include "modules/video_coding/codecs/h264/h264_decoder_impl.h"
+#if defined(SPARK_USE_X264)
+#include "modules/video_coding/codecs/h264/x264_encoder_impl.h"
+#else
 #include "modules/video_coding/codecs/h264/h264_encoder_impl.h"
+#endif
 #endif
 
 #include "rtc_base/checks.h"

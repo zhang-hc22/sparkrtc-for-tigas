@@ -322,6 +322,10 @@ config("common_config") {
     defines += [ "WEBRTC_USE_H264" ]
   }
 
+  if (spark_use_x264) {
+    defines += [ "SPARK_USE_X264" ]
+  }
+
   if (rtc_use_absl_mutex) {
     defines += [ "WEBRTC_ABSL_MUTEX" ]
   }
