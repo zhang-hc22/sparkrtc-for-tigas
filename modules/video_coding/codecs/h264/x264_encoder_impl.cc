@@ -287,7 +287,7 @@ int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
   
   memset(&param_, 0, sizeof(param_));
   x264_param_default(&param_);
-  int ret_val = x264_param_default_preset(&param_, "ultrafast", "zerolatency");
+  int ret_val = x264_param_default_preset(&param_, "superfast", "zerolatency");
   if (ret_val != 0) {
     RTC_LOG(LS_ERROR)
         << "H264EncoderImpl::InitEncode() fails to initialize encoder ret_val "
@@ -297,7 +297,7 @@ int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
     return WEBRTC_VIDEO_CODEC_ERROR;
   }
 
-  int bitrate_kbps = 28000;
+  int bitrate_kbps = 3000;
 
   param_.i_threads = 1;
   param_.i_width = inst->width;
@@ -306,7 +306,7 @@ int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
   param_.i_keyint_max = 1500;
   param_.rc.i_rc_method = X264_RC_ABR;
   param_.rc.i_vbv_max_bitrate = bitrate_kbps;
-  param_.rc.i_vbv_buffer_size = bitrate_kbps;
+  param_.rc.i_vbv_buffer_size = bitrate_kbps / 2;
   // param_.i_bframe = 0;
   // param_.b_open_gop = 0;
   // param_.i_bframe_pyramid = 0;
@@ -505,6 +505,8 @@ void H264EncoderImpl::SetRates(const RateControlParameters& parameters) {
                        << parameters.framerate_fps;
       configurations_[i].SetStreamState(true);
       param_.rc.i_bitrate = bitrate_kbps;
+      param_.rc.i_vbv_max_bitrate = bitrate_kbps;
+      param_.rc.i_vbv_buffer_size = bitrate_kbps / 2;
       param_.i_fps_num = static_cast<int>(parameters.framerate_fps);
       x264_encoder_reconfig(encoder_, &param_);
       // Update h264 encoder.
