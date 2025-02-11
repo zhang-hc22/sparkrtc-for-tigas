@@ -1,37 +1,3 @@
-# Libx264 branch
-
-<!-- This branch is created because we got some issues about libx264 involvement in main branch. Now it is included, but not used as a default. It also should be built from another source and versions are lack of control.
-
-So in this branch I'll:
-- Add submodule for x264;
-- Add compiling options to select from openh264, libx264 and default vp8; -->
-Now you can build sparkrtc without libx264.
-
-Openh264 will be built but not selected. VP8 will be selected as the default encoder and decoder,  if you want to use H264, you should adjust the codec priorities in conductor.cc in peerconnection examples.
-
-For H264, we by default use openh264 for h264 encoder. 
-
-If you want to use x264:
-
-1. Turn on "spark_use_x264" to switch to x264 encoder like this:
-
-```
-gn gen out/t --args="spark_use_x264=true"
-```
-
-2. Get libx264 lib and make sure the path in video_codec/BUILD.gn is right.
-
-<!-- ```
-libs = ["path/to/x264/libx264.a"]
-``` -->
-
-```
-cd third_party/x264
-./configure --enable-shared --enable-static
-make
-```
-Make sure you get libx264.a.
-
 
 # SparkRTC
 
@@ -66,7 +32,7 @@ Enter the root directory of the repo:
 ```
 cd ./sparkrtc
 ```
-Clone the submodules ([openh264](https://github.com/hkust-spark/openh264) and [ffmpeg](https://github.com/hkust-spark/openh264)), which are also modified by us:
+Clone the submodules which are also modified by us([openh264](https://github.com/hkust-spark/openh264), [x264](https://github.com/hxjwb/x264) and [ffmpeg](https://github.com/hkust-spark/openh264)):
 ```
 git submodule update --init --recursive
 ```
@@ -128,9 +94,9 @@ Start any number of `peerconnection_clients` and connect them to the server. The
 
 For more guidelines, see [here](https://webrtc.github.io/webrtc-org/native-code/development/).
 
-# Local Video Guidelines
+# Local Video Example Guidelines
 
-We implemented a ``peerconnection_localvideo`` example modified from ``peerconnection_client`` on MacOS and Linux for testing purposes. It streams s local video sequence (YUV420) instead of capturing from cameras. The GUI is optionally removed for command line testing.
+We implemented a ``peerconnection_localvideo`` example modified from ``peerconnection_client`` on MacOS and Linux for automatic testing. It streams raw local video files (YUV420) instead of capturing from cameras. The GUI is optionally removed for command line testing.
 
 
 ## CLI Options:
@@ -159,4 +125,29 @@ By default, the GUI is turned off. Add ```--gui``` on receiver to open the rende
 ```
 ./peerconnection_localvideo --file "input.yuv" --height 1080 --width 1920 --fps 24
 ```
+
+# Codec Selection Guidelines
+
+We implemented libx264 as an alternative to openh264 for H264 encoding. However, libx264 should be built manually by following these steps:
+
+1. Compile x264
+```
+cd third_party/x264
+./configure --enable-shared --enable-static
+make
+```
+Make sure you get libx264.a in the folder.
+
+2.  Turn on "spark_use_x264" to specify x264 as the h264 encoder:
+
+```
+gn gen out/x264_test --args="spark_use_x264=true"
+ninja -C out/x264_test
+```
+
+
+Notably, vp8 will still be selected as the default codec in peerconnection examples, if you want to directly use H264, you may want to adjust the codec priorities in conductor.cc in peerconnection examples like [this commit](https://github.com/hkust-spark/sparkrtc/commit/82e7a7ec097a808476f0dcf91d8c9ff67011c780).
+
+
+
 
