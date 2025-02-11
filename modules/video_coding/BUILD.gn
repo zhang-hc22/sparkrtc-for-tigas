@@ -470,7 +470,7 @@ rtc_library("webrtc_h264") {
       "codecs/h264/x264_encoder_impl.cc",
       "codecs/h264/x264_encoder_impl.h",
     ]
-    libs = ["path/to/x264/libx264.a"]
+    libs = ["../../third_party/x264/libx264.a"]
   }
   else {
     sources += [

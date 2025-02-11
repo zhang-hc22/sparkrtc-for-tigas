@@ -21,34 +21,17 @@ gn gen out/t --args="spark_use_x264=true"
 
 2. Get libx264 lib and make sure the path in video_codec/BUILD.gn is right.
 
-```
+<!-- ```
 libs = ["path/to/x264/libx264.a"]
+``` -->
+
 ```
-
-## Todos:
-
-- add x264 as submodule
-- see if we can build it with depot_tools for convenience.
-
-# Temporary solutions for now
-
-1. Checkout this branch
-2. Get the code and match the versions of headers:
+cd third_party/x264
+./configure --enable-shared --enable-static
+make
 ```
-git clone https://code.videolan.org/videolan/x264.git
-git checkout 1243d9ffb04dac7005ee9ecc79459034429dd5aa
-```
-You can also replace "x264.h" and "x264_config.h" in modules/video_coding/codecs/h264/include to match the versions.
+Make sure you get libx264.a.
 
-3. Turn on options for ffmpeg and h264:
-Check this commit:
-https://github.com/hkust-spark/sparkrtc/commit/efe9cb98aea180b3800eb36727595ad08640c42a#diff-b2b1f3ec619c03c5bba2f171beab1301d960e1dcac6a17a99ce02326ce9c49b4R47
-
-Modifications in "conductor.cc" is used to force h264 as codec only.
-
-4. Test it
-
-You can check if its ok by the standard error output. If its x264, we can observe some perframe information from the encoder in standard error output.
 
 # SparkRTC
 
