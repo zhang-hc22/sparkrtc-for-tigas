@@ -4,3 +4,6 @@
 [submodule "third_party/openh264/src"]
 	path = third_party/openh264/src
 	url = https://github.com/hkust-spark/openh264
+[submodule "third_party/x264"]
+	path = third_party/x264
+	url = https://github.com/hxjwb/x264.git
