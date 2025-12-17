@@ -69,7 +69,8 @@ void WrappedDesktopCapturer::StartCapture() {
       int total_frame = video_d->number_of_frames();
 
       if (frame_count_ >= total_frame) {
-        frame_count_ = 0;
+        exit(0);
+        // frame_count_ = 0;
       }
         rtc::scoped_refptr<webrtc::I420BufferInterface> frame_buffer = video_d->GetFrame(frame_count_++);
       

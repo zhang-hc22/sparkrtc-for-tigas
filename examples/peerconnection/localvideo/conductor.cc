@@ -16,7 +16,9 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#if not defined(WEBRTC_WIN)
 #include <unistd.h>
+#endif
 #include "absl/memory/memory.h"
 #include "absl/types/optional.h"
 #include "api/audio/audio_mixer.h"
@@ -405,7 +407,9 @@ void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
       peer_connection_->CreateAnswer(
           this, webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
     }
+  #if not defined(WEBRTC_WIN)
     usleep(10000);
+  #endif
   } else {
     RTC_LOG(LS_INFO) << "else3";
     std::string sdp_mid;

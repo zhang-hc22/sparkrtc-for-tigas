@@ -8,6 +8,7 @@ import subprocess
 import signal
 import sys
 import time
+import psutil
 
 from concurrent.futures import ThreadPoolExecutor
 from math import log10, sqrt
@@ -72,12 +73,15 @@ def overlay_qrcode_to_video(cfg):
                         output_path + " ../send/"+ cfg.data + "/frame%d.png -y"
     os.system(ffmpeg_command)
 
-def scan_qrcode_each(png_path):
+def scan_qrcode_each(png_path, pre_send_index):
     if os.path.exists(png_path):
         image = cv2.imread(png_path)
         detector = cv2.wechat_qrcode_WeChatQRCode('detect.prototxt','detect.caffemodel', 'sr.prototxt','sr.caffemodel')
         res, _ = detector.detectAndDecode(image)
-        return res[0]
+        if len(res) > 0:
+            return res[0]
+        else:
+            return pre_send_index
     else:
         sys.exit(f"Error: {png_path} not exsist!")
 
@@ -88,8 +92,8 @@ def scan_qrcode_fast(recv_raw_frames_dir, received_frame_cnt):
 
     for i in range(1, received_frame_cnt + 1):
         png_path = recv_raw_frames_dir + "frame" + str(i) + ".png"
-        send_index = int(scan_qrcode_each(png_path))
-        if pre_send_index + 1 != send_index:
+        send_index = int(scan_qrcode_each(png_path, pre_send_index))
+        if pre_send_index + 1 < send_index:
             drop_frames_index.extend(range(pre_send_index + 1, send_index))
         receive_correspoding_send_index.append(send_index)
         pre_send_index = send_index
@@ -97,7 +101,7 @@ def scan_qrcode_fast(recv_raw_frames_dir, received_frame_cnt):
     return drop_frames_index, receive_correspoding_send_index
 
 def calc_psnr_each(i, recv_raw_frames_dir, send_raw_frames_dir, psnr_tmp_dir, receive_correspoding_send_index):
-    send_index = receive_correspoding_send_index[i]
+    send_index = receive_correspoding_send_index[i - 1]
     rec_img_path = recv_raw_frames_dir + "frame" + str(i) + ".png"
     send_img_path = send_raw_frames_dir + "frame" + str(send_index) + ".png"
 
@@ -141,7 +145,7 @@ def calc_psnr_fast(recv_raw_frames_dir, send_raw_frames_dir, psnr_res_dir, recei
     return frame_psnr
 
 def calc_ssim_each(i, recv_raw_frames_dir, send_raw_frames_dir, ssim_tmp_dir, receive_correspoding_send_index):
-    send_index = receive_correspoding_send_index[i]
+    send_index = receive_correspoding_send_index[i - 1]
     rec_img_path = recv_raw_frames_dir + "frame" + str(i) + ".png"
     send_img_path = send_raw_frames_dir + "frame" + str(send_index) + ".png"
     ssim_f_str = ssim_tmp_dir + str(i) + ".log"
@@ -178,70 +182,153 @@ def calc_ssim_fast(recv_raw_frames_dir, send_raw_frames_dir, ssim_res_dir, recei
 
     return frame_ssim
 
-def calc_delay(recv_dir):
+def write_data_to_file(data_lists, file):
+    with open(file, 'w') as f_file:
+        data_len = min([len(x) for x in data_lists])
+        for i in range(data_len):
+            content = ""
+            for data in data_lists:
+                content = content + str(data[i]) + ","
+            content += "\n"
+            f_file.write(content)
+
+def read_data_from_file(file, count, data_lists, seperator):
+    lines = open(file,'r').read().split('\n')
+    for line in lines:
+        line = line.split(seperator)
+        if len(line) != count:
+            continue
+        for i in range(count):
+            if line[i].isdigit():
+                data_lists[i].append(int(line[i]))
+
+def extract_rate_and_framesize(recv_dir):
+    send_log_file = recv_dir + "send.log"
+    rate_stamp_file = recv_dir + "rate_timestamp.log"
+    frame_size_stamp_file = recv_dir + "frame_size_original_timestamp.log"
+
+    os.system("rm -rf " + rate_stamp_file)
+    os.system("rm -rf " + frame_size_stamp_file)
+
+    extract_rate_command = "grep \"Send Statistics SetRates\" " + send_log_file + " | awk \'{print $13, $8}\' > " + rate_stamp_file
+    extract_frame_size_command = "grep \"Send Statistics Send Frame Size\" " + send_log_file + " | awk \'{print $10, $7}\' > " + frame_size_stamp_file
+
+    os.system(extract_rate_command)
+    os.system(extract_frame_size_command)
+
+    rate_time = []
+    rate = []
+    read_data_from_file(rate_stamp_file, 2, [rate_time, rate], ' ')
+
+    frame_size_time = []
+    frame_size = []
+    read_data_from_file(frame_size_stamp_file, 2, [frame_size_time, frame_size], ' ')
+
+    return rate_time, rate, frame_size_time, frame_size
+
+def match_rate_with_frame_index(rate_file, frame_index_file, output_file):
+    rate_time = []
+    rate = []
+    with open(rate_file, "r") as f:
+        for lines in f.readlines():
+            line = lines.split(",")
+            rate_time.append(line[0])
+            rate.append(line[1])
+
+    rate_current_index = 0
+
+    f_output = open(output_file, "w")
+
+    with open(frame_index_file, "r") as f:
+        for lines in f.readlines():
+            line = lines.split(",")
+            frame_index = line[0]
+            time = int(line[2])
+
+            if rate_current_index >= len(rate_time):
+                f_output.write(str(frame_index) + ',' + str(rate[len(rate) - 1]) + '\n')
+
+            for i in range(rate_current_index, len(rate_time) - 1):
+                if time < int(rate_time[i + 1]):
+                    rate_current_index = i
+                    # print(i, frame_index, time, rate[i], rate_time[i + 1])
+                    f_output.write(str(frame_index) + ',' + str(rate[i]) + ',' + str(time) + '\n')
+                    break
+
+    f_output.close()
+
+def calc_delay_framesize_rate(recv_dir, res_dir):
     time_stamp_start = []
     time_stamp_end = []
     start_frame_idx = []
     end_frame_idx = []
     frame_delay = []
+    frame_size = []
 
     recv_file = recv_dir + "recv.log"
     send_file = recv_dir + "send.log"
     start_time_stamp_file = recv_dir + "start_stamp.log"
     end_time_stamp_file = recv_dir + "end_stamp.log"
+    frame_size_file = res_dir + "frame_size.log"
+    delay_file = res_dir + "delay.log"
+    rate_file = res_dir + "rate.log"
+    rate_with_frame_index_file = res_dir + "rate_with_frame_index.log"
+
     os.system("rm -f " + start_time_stamp_file)
     os.system("rm -f " + end_time_stamp_file)
+    os.system("rm -f " + frame_size_file)
+    os.system("rm -f " + delay_file)
+    os.system("rm -f " + rate_file)
+    os.system("rm -f " + rate_with_frame_index_file)
 
-    end_stamp_command = "grep \"Time Stamp\" " + recv_file + " | awk \'{print $4 $5 $6}\' > " + end_time_stamp_file
-    start_stamp_command = "grep \"Time Stamp\" " + send_file + " | awk \'{print $4 $5 $6}\' > " + start_time_stamp_file
+    end_stamp_command = "grep \"Time Stamp\" " + recv_file + " | awk \'{print $4}\' > " + end_time_stamp_file
+    start_stamp_command = "grep \"Time Stamp\" " + send_file + " | awk \'{print $4}\' > " + start_time_stamp_file
     os.system(start_stamp_command)
     os.system(end_stamp_command)
 
-    f = open(start_time_stamp_file, "r")
-    for line in f.readlines():
-        line = line.split(":")
-        if len(line) != 3:
-            continue
-        start_frame_idx.append(int(line[1]))
-        time_stamp_start.append(int(line[2]))
-    f.close()
-
-    f = open(end_time_stamp_file, "r")
-    for line in f.readlines():
-        line = line.split(":")
-        if len(line) != 3:
-            continue
-        end_frame_idx.append(int(line[1]))
-        time_stamp_end.append(int(line[2]))
-    f.close()
+    read_data_from_file(start_time_stamp_file, 3, [[], start_frame_idx, time_stamp_start], ":")
+    read_data_from_file(end_time_stamp_file, 3, [[], end_frame_idx, time_stamp_end], ":")
 
     idx = 0
-
     for i in range(len(time_stamp_end)):
         for j in range(idx, len(time_stamp_start)):
             if end_frame_idx[i] == start_frame_idx[j]:
                 idx = j
                 time_delay = time_stamp_end[i] - time_stamp_start[j]
                 if time_delay > 1000:
-                    print("delay too long:", end_frame_idx[i])
-                    exit(1)
+                    print("delay too long:", i, end_frame_idx[i])
+                    frame_delay.append(time_delay)
+                    # exit(1)
                 else:
                     frame_delay.append(time_delay)
                 break
 
-    return frame_delay, start_frame_idx
+    rate_time, rate, frame_size_time, frame_size = extract_rate_and_framesize(recv_dir)
+    start_time = min(rate_time[0], frame_size_time[0], time_stamp_end[0])
+    rate_time = [x - start_time for x in rate_time]
+    frame_size_time = [x - start_time for x in frame_size_time]
+    time_stamp_end = [x - start_time for x in time_stamp_end]
+
+    write_data_to_file([range(1, len(end_frame_idx) + 1), end_frame_idx, frame_size_time, frame_size], frame_size_file)
+    write_data_to_file([rate_time, rate], rate_file)
+    write_data_to_file([range(1, len(end_frame_idx) + 1), end_frame_idx, time_stamp_end, frame_delay], delay_file)
+
+    match_rate_with_frame_index(rate_file, frame_size_file, rate_with_frame_index_file)
+
+    return frame_delay
 
 def decode_recv_video(cfg):
     re_extract_images = True
-    recv_dir = "../rec/" + cfg.data + "/"
+    recv_dir = "../result/" + cfg.output_dir + "/rec/" + cfg.data + "/"
+    res_dir = "../result/" + cfg.output_dir + "/res/" + cfg.data + "/"
 
     recv_video_path = recv_dir + "recon.yuv"
     recv_raw_frames_dir = recv_dir + "raw_frames/"
 
-    ssim_res_dir = "../res/" + cfg.data + "/ssim/"
-    psnr_res_dir = "../res/" + cfg.data + "/psnr/"
+    ssim_res_dir = res_dir + "ssim/"
+    psnr_res_dir = res_dir + "psnr/"
     send_raw_frames_dir = "../send/" + cfg.data + "/"
-    delay_file = "../res/" + cfg.data + "/delay.log"
+    receive_correspoding_file = res_dir + "receive_correspoding_index.log"
 
     if re_extract_images:
         os.system("rm -rf " + recv_raw_frames_dir)
@@ -258,19 +345,17 @@ def decode_recv_video(cfg):
         os.system(ffmpeg_command)
     received_frame_cnt = len(os.listdir(recv_raw_frames_dir))
 
-    delay, start_frame_idx = calc_delay(recv_dir)
+    delay = calc_delay_framesize_rate(recv_dir, res_dir)
     drop_frames_index, receive_correspoding_send_index = scan_qrcode_fast(recv_raw_frames_dir, received_frame_cnt)
     print(f"Drop frames index: {drop_frames_index}")
+    print(len(drop_frames_index))
     ssim = calc_ssim_fast(recv_raw_frames_dir, send_raw_frames_dir, ssim_res_dir, received_frame_cnt, receive_correspoding_send_index)
     psnr = calc_psnr_fast(recv_raw_frames_dir, send_raw_frames_dir, psnr_res_dir, received_frame_cnt, receive_correspoding_send_index)
 
-    f_delay = open(delay_file, "w")
-    idx = 0
-    for elem in delay:
-        frame_sequence = start_frame_idx[idx]
-        f_delay.write(str(idx + 1) + "," + str(frame_sequence) + "," + str(elem) + "\n")
-        idx += 1
-    f_delay.close()
+    f_receive_correspoding = open(receive_correspoding_file, "w")
+    for idx in range(len(receive_correspoding_send_index)): 
+        f_receive_correspoding.write(str(idx + 1) + "," + str(receive_correspoding_send_index[idx]) + "\n")
+    f_receive_correspoding.close()
 
     return ssim, psnr, delay, drop_frames_index
 
@@ -286,32 +371,69 @@ def kill_process(process):
     process.wait()
     os.killpg(process.pid,signal.SIGKILL)
 
-def send_and_recv_video(cfg):
-    method_type = cfg.method_type
-    loss_rate = cfg.loss_rate
-    method_val = cfg.method_val
-    burst_length = cfg.burst_length
+def run_receive_process(client_bin, recv_file, server_ip, port, recv_dir, trace_file):
+    # if enalbe mahimahi, need to explicit set server_ip and port
+    enable_mahimahi_limit = False
+    enable_screenshot = False
 
+    screenshot_process = -1
+    
+    if enable_screenshot:
+        recv_command = client_bin + " --gui --recon " + recv_file + " --server " + server_ip + " --port " + port + \
+            " > " + recv_dir + "recv.log 2>&1 &\n"
+        xvfb_display_command = "export DISPLAY=:100 && Xvfb :100 -screen 0 1280x720x24&"
+        recv_process = start_process(xvfb_display_command + " && " + recv_command)
+        # subprocess.run(recv_command)
+        # ffmpeg_command = "ffmpeg -video_size 1280x720 -framerate 30 -f x11grab -i :100 -r 30 -y output.mp4&"
+        # screenshot_process = start_process(ffmpeg_command)
+    else:
+        recv_command = client_bin + " --recon " + recv_file + " --server " + server_ip + " --port " + port + \
+            " > " + recv_dir + "recv.log 2>&1 &\n"
+        recv_process = -1
+
+    trace_logs_file = "../file/trace_logs/" + trace_file + ".log"
+    mahimahi_command = mahimahi_path + "mm-link " + str(trace_logs_file) + " " + str(trace_logs_file)# + mahimahi_path + "mm-loss-trace " +\
+        #"downlink --trace-file=../file/loss_trace"
+
+    if enable_mahimahi_limit:
+        if recv_process == -1:
+            recv_process = start_process(mahimahi_command)
+        else:
+            recv_process.stdin.write(mahimahi_command.encode())
+            recv_process.stdin.flush()
+            time.sleep(1)
+        recv_process.stdin.write(recv_command.encode())
+        recv_process.stdin.flush()
+        time.sleep(1)
+    else:
+        if recv_process == -1:
+            recv_process = start_process(recv_command)
+        else:
+            # subprocess.run(recv_command)
+            recv_process.stdin.write(recv_command.encode())
+            recv_process.stdin.flush()
+        time.sleep(1)
+    return recv_process, screenshot_process
+ 
+
+def send_and_recv_video(cfg):
     root_dir = "../../"
-    res_overall_dir = "../res/" + cfg.data + "/"
+    res_overall_dir = "../"
+    words = cfg.output_dir.split('/')
 
     client_bin = root_dir + "out/Default/peerconnection_localvideo"
 
     # Can custormize ip and port
-    # server_ip = "100.64.0.1"
-    # port = "8888"
+    server_ip = "127.0.0.1"
+    port = "8888"
 
-    recv_dir = "../rec/" + cfg.data + "/"
+    recv_dir = "../result/" + cfg.output_dir + "/rec/" + cfg.data + "/"
     recv_file = recv_dir + "recon.yuv"
     send_video_path = "../data/" + cfg.data + "_qrcode.yuv"
 
-    server_command = root_dir + "out/Default/peerconnection_server &"
-    send_command = root_dir + "out/Default/peerconnection_localvideo --file " + send_video_path+ \
-        " --height " + str(cfg.height) + " --width " + str(cfg.width) + " --fps " + str(fps)
-    recv_command = client_bin + " --recon " + recv_file + " > " + recv_dir + "recv.log 2>&1 &\n"
-        #" --method_val " + str(method_val) + " --method_type " + str(method_type) # + " > " + recv_dir + "recv.log 2>&1 &\n"
-    mahimahi_command = mahimahi_path + "mm-delay 7 "# + mahimahi_path + "mm-loss-trace " +\
-        #"downlink --trace-file=../file/loss_trace"
+    server_command = root_dir + "out/Default/peerconnection_server --port " + port + " &"
+    send_command = root_dir + "out/Default/peerconnection_localvideo --file " + send_video_path + \
+        " --height " + str(cfg.height) + " --width " + str(cfg.width) + " --fps " + str(fps) + " --server " + server_ip + " --port " + port
 
     send_log_file = recv_dir + "send.log"
 
@@ -319,26 +441,23 @@ def send_and_recv_video(cfg):
     os.system("mkdir -p " + res_overall_dir)
 
     f_res_overal_file = open(res_overall_dir + "statistics.log", "a")
+    f_result_csv_file = open(res_overall_dir + "statistics.csv", "a")
 
     server_process = start_process(server_command)
     time.sleep(1)
 
-    # if enalbe mahimahi, need to explicit set server_ip and port
-    # recv_process = start_process(mahimahi_command)
-    # recv_process.stdin.write(recv_command.encode())
-    # recv_process.stdin.flush()
-    # time.sleep(1)
-
-    recv_process = start_process(recv_command)
-    time.sleep(1)
+    recv_process, screenshot_process = run_receive_process(client_bin, recv_file, server_ip, port, recv_dir, str(words[0]))
 
     send_process = start_process(send_command, send_log_file)
     send_process.wait()
 
     kill_process(recv_process)
+    if screenshot_process != -1:
+        kill_process(screenshot_process)
     kill_process(server_process)
 
     ssim, psnr, delay, drop_frames_index = decode_recv_video(cfg)
+    # ssim, psnr, delay, drop_frames_index = decode_recv_video(cfg)
     ssim = np.array(ssim)
     delay = np.array(delay)
     psnr = np.array(psnr)
@@ -348,47 +467,109 @@ def send_and_recv_video(cfg):
     avg_psnr = np.mean(psnr)
 
     print(f"ssim: {avg_ssim} psnr: {avg_psnr} delay: {avg_delay}")
-    f_res_overal_file.write(str(avg_ssim) + "," + str(avg_psnr) + "," + str(avg_delay) + "\n")
+    f_res_overal_file.write("------------------- " + str(cfg.output_dir) + " ---------------------------" + "\n")
+    f_res_overal_file.write(str(cfg.output_dir) + "," + str(avg_ssim) + "," + str(avg_psnr) + "," + str(avg_delay) + "," + str(len(drop_frames_index)) + "\n")
+    f_res_overal_file.write("Drop frames count: " + str(len(drop_frames_index)) + "\n")
     f_res_overal_file.write("Drop frames index: " + str(drop_frames_index) + "\n")
     f_res_overal_file.close()
 
-def show_experiment_fig(data_file, fig_file, choose_index, label):
+    # video_file, bitrate_file, vbv_methods, ssim, psnr, delay, drop_frame_index
+    f_result_csv_file.write(str(cfg.data) + ',' + str(words[0]) + ',' + str(words[1]) + "," + str(avg_ssim) + "," + str(avg_psnr) + "," + str(avg_delay) + "," + str(len(drop_frames_index)) + "\n")
+    f_result_csv_file.close()
+
+def show_experiment_fig(data_file, fig_file, x_index, y_index, label, x_label, start_index = 0):
     data = []
     data_index = []
 
     if not os.path.exists(data_file):
         return
-
     with open(data_file, "r") as f:
         for lines in f.readlines():
             line = lines.split(",")
-            value = float(line[choose_index])
+            value = float(line[y_index])
             if value > 0:
-                data_index.append(int(line[0]))
+                data_index.append(int(line[x_index]))
                 data.append(float(value))
 
-    plt.figure(dpi = 300, figsize = (7, 4.2))
-    plt.xlabel("frame index", fontsize = 12)
-    plt.ylabel(label, fontsize = 12)
-    plt.plot(data_index, data, label = label)
+    plt.figure(figsize = (16, 8))
+    plt.xlabel(x_label, fontsize = 14)
+    plt.ylabel(label, fontsize = 14)
+    plt.plot(data_index[start_index:], data[start_index:], label = label)
     plt.legend()
-    plt.show()
+    plt.savefig(fig_file, bbox_inches = 'tight', pad_inches = 0.1)
+
+def show_multi_y_axis_fig(files, x_indexes, y_indexes, labels, x_label, start_index, fig_file):
+    if len(files) != len(x_indexes) or len(files) != len(y_indexes) or\
+        len(files) != len(labels):
+        print("Please pass filename, x_indexes, y_indexes and lable for both file!")
+        return
+
+    colors = ['r', 'g', 'b', 'c', 'm', 'y']
+    fig, ax1 = plt.subplots(figsize=(16, 8))
+    is_first_file = True
+
+    for idx in range(len(files)):
+        file = files[idx]
+        if not os.path.exists(file):
+            continue
+
+        data = []
+        data_index = []
+
+        count = 1
+        with open(file, "r") as f:
+            for lines in f.readlines():
+                line = lines.split(",")
+                value = float(line[y_indexes[idx]])
+                if value > 0:
+                    data_index.append(int(line[x_indexes[idx]]))
+                    data.append(float(value))
+                    count += 1
+        color = colors[idx]
+        if is_first_file:
+            ax1.plot(data_index[start_index:], data[start_index:], color)
+            ax1.set_xlabel(x_label)
+            ax1.set_ylabel(labels[idx], color=color, fontsize=14)
+            ax1.tick_params(axis="y", labelcolor=color)
+            is_first_file = False
+        else:
+            ax2 = ax1.twinx()
+            ax2.spines['right'].set_position(('outward', 60 * idx))
+            ax2.plot(data_index[start_index:], data[start_index:], color)
+            ax2.set_ylabel(labels[idx], color=color, fontsize=14)
+            ax2.tick_params(axis="y", labelcolor=color)
+
     plt.savefig(fig_file, bbox_inches = 'tight', pad_inches = 0.1)
 
 def show_fig(cfg):
-    fig_dir = "../fig/" + cfg.data + "/"
+    fig_dir = "../result/" + cfg.output_dir + "/fig/" + cfg.data + "/"
 
     os.system("rm -rf " + fig_dir)
     os.system("mkdir -p " + fig_dir)
 
-    res_dir = "../res/" + cfg.data + "/"
+    res_dir = "../result/" + cfg.output_dir + "/res/" + cfg.data + "/"
     ssim_log_file = res_dir + "ssim/ssim.log"
     psnr_log_file = res_dir + "psnr/psnr.log"
     delay_file = res_dir + "delay.log"
+    frame_size_file = res_dir + "frame_size.log"
+    rate_file = res_dir + "rate.log"
 
-    show_experiment_fig(delay_file, fig_dir + "/delay.png", 2, "Delay")
-    show_experiment_fig(ssim_log_file, fig_dir + "/ssim.png", 1, "SSIM")
-    show_experiment_fig(psnr_log_file, fig_dir + "/psnr.png", 1, "PSNR")
+    show_experiment_fig(delay_file, fig_dir + "/delay.png", 0, 3, "Delay", "frame_index")
+    show_experiment_fig(frame_size_file, fig_dir + "/frame_size.png", 0, 3, "frame_size", "frame_index", 5)
+    show_experiment_fig(ssim_log_file, fig_dir + "/ssim.png", 0, 1, "SSIM", "frame_size")
+    show_experiment_fig(psnr_log_file, fig_dir + "/psnr.png", 0, 1, "PSNR", "frame_size")
+
+    files = [delay_file, frame_size_file, rate_file]
+    x_indexes = [2, 2, 0]
+    y_indexes = [3, 3, 1]
+    labels = ["Delay(ms)", "FrameSize(bytes)", "Rate(kbps)"]
+    show_multi_y_axis_fig(files, x_indexes, y_indexes, labels, "time stamp(ms)", 5, fig_dir + "/delay_frame_size_rate.png")
+
+    files = [delay_file, frame_size_file, psnr_log_file]
+    x_indexes = [0, 0, 0]
+    y_indexes = [3, 3, 1]
+    labels = ["Delay", "FrameSize", "PSNR"]
+    show_multi_y_axis_fig(files, x_indexes, y_indexes, labels, "frame_index", 5, fig_dir + "/delay_framesize_psnr.png")
 
 def parse_args():
 	parser = argparse.ArgumentParser()
@@ -400,6 +581,7 @@ def parse_args():
 	parser.add_argument("--burst_length", type=int)
 	parser.add_argument("--width", type=int)
 	parser.add_argument("--height", type=int)
+	parser.add_argument("--output_dir", type=str)
 
 	return parser.parse_args()
 

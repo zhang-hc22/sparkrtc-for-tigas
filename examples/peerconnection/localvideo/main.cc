@@ -43,6 +43,7 @@ int local_video_width;
 int local_video_height;
 int local_video_fps;
 bool is_sender = false;
+bool is_GUI = false;
 
 namespace {
 // A helper class to translate Windows command line arguments into UTF8,
@@ -117,6 +118,7 @@ int PASCAL wWinMain(HINSTANCE instance,
   local_video_width = absl::GetFlag(FLAGS_width);
   local_video_height = absl::GetFlag(FLAGS_height);
   local_video_fps = absl::GetFlag(FLAGS_fps);
+  is_GUI = absl::GetFlag(FLAGS_gui);
 
 
   // If the ./logs directory doesn't exist, create it.
@@ -145,9 +147,19 @@ int PASCAL wWinMain(HINSTANCE instance,
     return -1;
   }
 
+  if (is_GUI) {
+    RTC_LOG(LS_ERROR) << "GUI is not supported on Windows.";
+    return -1;
+  }
+
+  bool autocall = false;
+  if (local_video_filename != "NONE") {
+    is_sender = true;
+    autocall = true;
+  }
+
   const std::string server = absl::GetFlag(FLAGS_server);
-  MainWnd wnd(server.c_str(), absl::GetFlag(FLAGS_port),
-              absl::GetFlag(FLAGS_autoconnect), absl::GetFlag(FLAGS_autocall));
+  MainWnd wnd(server.c_str(), absl::GetFlag(FLAGS_port), autocall);
   if (!wnd.Create()) {
     RTC_DCHECK_NOTREACHED();
     return -1;
@@ -158,6 +170,7 @@ int PASCAL wWinMain(HINSTANCE instance,
   auto conductor = rtc::make_ref_counted<Conductor>(&client, &wnd);
 
   main_thread.Start();
+  wnd.AutoConnect();
   // Main loop.
   MSG msg;
   BOOL gm;

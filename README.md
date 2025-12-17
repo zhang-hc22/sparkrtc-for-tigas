@@ -3,6 +3,7 @@
 
 SparkRTC is built on WebRTC.
 The major difference is the goal -- SparkRTC is designed for ultra low latency, with coordinations across a series of modules in WebRTC.
+SparkRTC follows the license of WebRTC, and is open-source, free to use, and only for research purpose.
 
 **WebRTC is a free, open software project** that provides browsers and mobile
 applications with Real-Time Communications (RTC) capabilities via simple APIs.
@@ -19,6 +20,12 @@ amongst others.
 
 First, be sure to install the [prerequisite software](https://webrtc.github.io/webrtc-org/native-code/development/prerequisite-sw/).
 
+Generally, we need to install the [depot_tools](https://commondatastorage.googleapis.com/chrome-infra-docs/flat/depot_tools/docs/html/depot_tools_tutorial.html#_setting_up).
+```
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+export PATH=/path/to/depot_tools:$PATH
+```
+
 
 ## Getting the Code
 
@@ -27,20 +34,22 @@ For desktop development:
 Clone the current repo:
 
 ```
-git clone https://github.com/hkust-spark/sparkrtc.git
+git clone https://github.com/hkust-spark/sparkrtc-public.git
 ```
 
 Enter the root directory of the repo:
 
 ```
-cd ./sparkrtc
+cd ./sparkrtc-public
 ```
-Clone the submodules which are also modified by us([openh264](https://github.com/hkust-spark/openh264), [x264](https://github.com/hxjwb/x264) and [ffmpeg](https://github.com/hkust-spark/openh264)):
+
+Clone the submodules:
+
 ```
 git submodule update --init --recursive
 ```
 
-Sync with other WebRTC-related repos using the `gclient` tool installed before.
+Sync with other WebRTC-related repos using the `gclient` tool installed before. This may take 10 to 20 minutes, depending on the network speed.
 
 ```
 gclient sync
@@ -132,6 +141,10 @@ By default, the GUI is turned off. Add ```--gui``` on receiver to open the rende
 ./peerconnection_localvideo --gui --recon "recon.yuv"
 ```
 
+If it's running on Windows system, the parameter need to use '=' to connect, e.g.
+```
+./peerconnection_localvideo --gui --recon="recon.yuv"
+```
 
 3. Start the sender(Should after receiver) with information of yuv file to be streamed.
 
@@ -139,28 +152,270 @@ By default, the GUI is turned off. Add ```--gui``` on receiver to open the rende
 ./peerconnection_localvideo --file "input.yuv" --height 1080 --width 1920 --fps 24
 ```
 
-# Codec Selection Guidelines
+# Experimenting Testbed Setup Guide
 
-We implemented libx264 as an alternative to openh264 for H264 encoding. However, libx264 should be built manually by following these steps:
+## Preparations
 
-1. Compile x264
-```
-cd third_party/x264
-./configure --enable-shared --enable-static
+All prerequisites of the SparkRTC are needed.
+
+Also,
+
+download and install  `ffmpeg`, and if using Linux, download `mahimahi`.
+
+```bash
+git clone https://github.com/LW945/mahimahi.git
+cd mahimahi
+./configure
 make
-```
-Make sure you get libx264.a in the folder.
-
-2.  Turn on "spark_use_x264" to specify x264 as the h264 encoder:
-
-```
-gn gen out/x264_test --args="spark_use_x264=true"
-ninja -C out/x264_test
+make install
 ```
 
+Install cv2
 
-Notably, vp8 will still be selected as the default codec in peerconnection examples, if you want to directly use H264, you may want to adjust the codec priorities in conductor.cc in peerconnection examples like [this commit](https://github.com/hkust-spark/sparkrtc/commit/82e7a7ec097a808476f0dcf91d8c9ff67011c780).
+```bash
+pip install opencv-python 
+pip install opencv-contrib-python
+```
+
+### **Experiment Code**
+
+The experiment code is located in the `sparkrtc/my_experiment` directory.
+
+### Directory Structure
+
+After downloading the repo, create the following directories in `sparkrtc/my_experiment` manually:
+
+```bash
+mkdir -p data file send fig/(video_name)
+```
+
+Replace the `(video_name)` with the name of your video. 
+
+### **Sending Video**
+
+The video to be sent should be placed in the data directory. And the video should be in `.yuv` format.
+
+For example:
+
+`sparkrtc/my_experiment/data/video_0a86_qrcode.yuv`
+
+### **Picture Frames**
+
+The pictures in the `sparkrtc/my_experiment/send/(video_name)` directory are all frames from the send video.
+
+Don't need to generate this seperately, the script can handle this.
+
+For example, add all frames of `video_0a86_qrcode.yuv` to
+
+`sparkrtc/my_experiment/send/video_0a86`
+
+### **Download WeChat QR Code Scanner Model**
+
+Some experiments include embedding QR codes into frames, and the WeChat QR Code Scanner Model is needed besides the cv2 library.
+
+Download the WeChat QR code scanner model file from GitHub:
+
+https://github.com/Tianxiaomo/qrdecoder/tree/master/model
+
+Put every `detect*, sr*` files in `sparkrtc/my_experiment/code/`.
+
+### **Path Configuration**
+
+You need to manually change the path of your installation of `ffmpeg` and `mahimahi` in `sparkrtc/my_experiment/code/process_video_qrcode.py`
+
+Also, you can setup the video`fps` here.
+
+```shell
+import os
+import qrcode
+import cv2
+import argparse
+import matplotlib.pyplot as plt
+import numpy as np
+import subprocess
+import signal
+import time
+from concurrent.futures import ThreadPoolExecutor
+ffmpeg_path = "your/path/to/ffmpeg"
+mahimahi_path = "your/path/to/mahimahi"
+fps = 30
+```
+
+### **Loss Configuration**
+
+You need to manually change the experiment loss configuration of mahimahi via a config file. 
+
+Create a file named loss_trace in `sparkrtc/my_experiment/file`
+
+Config the file with the formate of 
+
+```
+timestamp(in mm), loss rate
+timestamp(in mm), loss rate 
+```
+
+For example:
+
+```
+3470,0
+3500,0.1
+```
+
+## One-tap Experiments
+
+Using `sparkrtc/my_experiment/code/run.sh` can run several experiments at once to make the process easier.
+
+**run.sh Usage**
+
+First generate video with qrcode.
+```bash
+./run.sh -i <data>.yuv -p gen_send_video
+# For example
+./run.sh -i video_0a86_qrcode.yuv  -p gen_send_video
+```
+
+Then run the send program.
+```bash
+./run.sh -i <data>.yuv -p all
+# For example
+./run.sh -i video_0a86_qrcode.yuv  -p all
+```
+
+### Detailed Usage
+
+The script - process_video_qrcode.py - can be run with different options to perform various tasks. The options are:
+
+1. gen_send_video: Generate video with QR codes.
+2. decode_recv_video: Decode received video and calculate metrics.
+3. show_fig: Generate figures from experiment results.
+4. send_and_recv: Send video and receive it, then process the results.
+
+#### **Generating Video with QR Codes**
+
+To generate a video with QR codes embedded in the frames:
+
+```bash
+python3 process_video_qrcode.py --option=gen_send_video --data=<video_name>
+```
+
+#### **Decoding Received Video**
+
+To decode the received video and calculate SSIM and delay:
+
+```bash
+python3 process_video_qrcode.py --option=decode_recv_video --data=<video_name>
+```
+#### **Generating Figures**
+
+To generate figures based on the experiment results:
+
+```bash
+python3 process_video_qrcode.py --option=show_fig --data=<video_name>
+```
+#### **Sending and Receiving Video**
+
+To send a video and receive it, then process the received video:
+
+```bash
+python process_video_qrcode.py --option=send_and_recv --data=<video_name>
+```
+
+## Output Results
+
+**General Output Structure**
+
+The output results from the experiments are generally stored in the following directory structure:
+
+```bash
+project_root/my_experiment/
+├── data
+│   ├── <video_name>.yuv
+│   └── <video_name>_qrcode.yuv
+├── file
+|   ├── loss_trace
+│   └── trace_logs
+│       └── <bandwidth_trace>.log
+├── qrcode
+│   └── <video_name>
+│       └── qrcode_<number>.png
+├── result
+│   └── <bandwidth_trace>
+│       └── output_1
+│           ├── fig
+│           │   └── <video_name>
+│           │       ├── delay.png
+│           │       └── ...
+│           ├── rec
+│           │   └── <video_name>
+│           │       ├── end_stamp.log
+│           │       ├── rate_timestamp.log
+│           │       ├── raw_frames
+│           │       │   └── frame<frame_number>.png
+│           │       ├── recon.yuv
+│           │       ├── recv.log
+│           │       ├── send.log
+│           │       └── start_stamp.log
+│           └── res
+│               └── <video_name>
+│                   ├── delay.log
+│                   ├── frame_size.log
+│                   ├── psnr
+│                   │   └── psnr.log
+│                   ├── rate.log
+│                   └── ssim
+│                       └── ssim.log
+└── send
+    └── <video_name>
+        └── frame<frame_number>.png
+```
+
+#### **Output Formats**
+
+**Logs and Metrics**
+
+ 1. **SSIM Log** (`ssim.log`):
+
+    •	Directory: `res/<video_name>/ssim/`
+
+​	•	Format: frame_number, ssim_value
+
+​	•	Description: Contains SSIM values for each frame.
+
+2. **Delay Log (**`delay.log`):
+
+   •	Directory: `res/<video_name>/`
+
+​	•	Format: delay_value
+
+​	•	Description: Contains delay values for each frame.
 
 
+## *Appendix: **Detailed Description***
 
+##### **QR Code Generation**
 
+`gen_qrcode(cfg, num)` generates QR codes and saves them as images. It then creates a YUV video from these images using ffmpeg.
+
+**Overlaying QR Codes on Video**
+
+`overlay_qrcode_to_video(cfg, num)` overlays the generated QR codes onto the video frames at specified positions.
+
+**Decoding QR Codes from Video**
+
+`scan_qrcode_fast(frame_list, qrcode_raw_dir, qrcode_res_dir)` and `scan_qrcode(num, qrcode_raw_dir, qrcode_res_dir)` decode QR codes from video frames and log the results.
+
+**Calculating SSIM**
+
+`cal_ssim_fast(frame_list, send_image_path, ssim_res_path, qrcode_res_path)` and `cal_ssim(num, send_image_path, ssim_res_path, qrcode_res_path)` calculate the SSIM between sent and received video frames.
+
+**Calculating Delay**
+
+`cal_delay(recv_dir)` calculates the delay between sent and received frames based on timestamps.
+
+**Sending and Receiving Video**
+
+`send_and_recv_video(cfg, num)` handles the process of sending the video with QR codes and receiving the video, then processes the received video to calculate SSIM and delay.
+
+**Plotting Results**
+
+`show_experiment_fig(cfg, fig_dir)` generates and saves plots showing SSIM loss and load time based on the experiment results.
