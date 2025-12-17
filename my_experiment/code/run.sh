@@ -43,12 +43,6 @@ if [ -z "${video_name}" ] || [ -z "${run_program}" ]; then
     usage
 fi
 
-if [ $run_program == "gen_send_video" ]; then
-	python3 process_video_qrcode.py --option=gen_send_video --data=$video_name --height=$height --width=$width
-fi
-
-trace_logs_dir="../file/trace_logs"
-
 trace_logs_dir="../file/trace_logs"
 
 if [ $run_program == "gen_send_video" ] || [ $run_program == "all" ]; then

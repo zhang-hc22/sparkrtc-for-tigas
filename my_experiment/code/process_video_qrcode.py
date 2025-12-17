@@ -631,8 +631,6 @@ def send_and_recv_video(cfg):
     send_process.wait()
 
     kill_process(recv_process)
-    if screenshot_process != -1:
-        kill_process(screenshot_process)
     kill_process(server_process)
 
     delay, drop_frames_index, vmaf_scores, overall_delay = decode_recv_video(cfg)

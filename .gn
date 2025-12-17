@@ -47,7 +47,8 @@ default_args = {
   # component builds.
   is_component_build = false
 
-  rtc_use_h264 = true # Enable H264 support
+  rtc_use_h264 = true
+  spark_use_x264 = true
   rtc_include_tests = false
   proprietary_codecs = true
   ffmpeg_branding = "Chrome" # Enabling ffmpeg h264 decoding
