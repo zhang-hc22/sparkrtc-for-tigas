@@ -9,13 +9,6 @@ SparkRTC follows the license of WebRTC, and is open-source, free to use, and onl
 applications with Real-Time Communications (RTC) capabilities via simple APIs.
 The WebRTC components have been optimized to best serve this purpose.
 
-**Our mission:** To enable rich, high-quality RTC applications to be
-developed for the browser, mobile platforms, and IoT devices, and allow them
-all to communicate via a common set of protocols.
-
-The WebRTC initiative is a project supported by Google, Mozilla and Opera,
-amongst others.
-
 ## Before You Start
 
 First, be sure to install the [prerequisite software](https://webrtc.github.io/webrtc-org/native-code/development/prerequisite-sw/).

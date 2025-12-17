@@ -30,6 +30,7 @@
 #include "rtc_base/experiments/struct_parameters_parser.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/numerics/safe_minmax.h"
+#include "rtc_base/helpers.h"
 
 namespace webrtc {
 
@@ -187,6 +188,7 @@ TrendlineEstimator::TrendlineEstimator(
       overuse_counter_(0),
       hypothesis_(BandwidthUsage::kBwNormal),
       hypothesis_predicted_(BandwidthUsage::kBwNormal),
+      hypothesis_aggresive_(1.0f),
       network_state_predictor_(network_state_predictor) {
   RTC_LOG(LS_INFO)
       << "Using Trendline filter for delay change estimation with settings "
@@ -229,12 +231,24 @@ void TrendlineEstimator::UpdateTrendline(double recv_delta_ms,
       std::swap(delay_hist_[i], delay_hist_[i - 1]);
     }
   }
-  if (delay_hist_.size() > settings_.window_size)
+  // RTC_LOG(LS_INFO) << "Window size " << settings_.window_size;
+  double first_arrival_time = delay_hist_.front().arrival_time_ms;
+  double last_arrival_time = delay_hist_.back().arrival_time_ms;
+  double duration = last_arrival_time - first_arrival_time;
+  // if (delay_hist_.size() > settings_.window_size)
+  //   delay_hist_.pop_front();
+  int MaxDuration = 100;
+  bool dofit = false;
+  while (duration > MaxDuration && delay_hist_.size() > 2){
+    dofit = true;
     delay_hist_.pop_front();
-
+    first_arrival_time = delay_hist_.front().arrival_time_ms;
+    last_arrival_time = delay_hist_.back().arrival_time_ms;
+    duration = last_arrival_time - first_arrival_time;
+  }
   // Simple linear regression.
   double trend = prev_trend_;
-  if (delay_hist_.size() == settings_.window_size) {
+  if (dofit) {
     // Update trend_ if it is possible to fit a line to the data. The delay
     // trend can be seen as an estimate of (send_rate - capacity)/capacity.
     // 0 < trend < 1   ->  the delay increases, queues are filling up
@@ -278,6 +292,7 @@ BandwidthUsage TrendlineEstimator::State() const {
 void TrendlineEstimator::Detect(double trend, double ts_delta, int64_t now_ms) {
   if (num_of_deltas_ < 2) {
     hypothesis_ = BandwidthUsage::kBwNormal;
+    hypothesis_aggresive_ = 1.0f;
     return;
   }
   const double modified_trend =
@@ -312,6 +327,25 @@ void TrendlineEstimator::Detect(double trend, double ts_delta, int64_t now_ms) {
     overuse_counter_ = 0;
     hypothesis_ = BandwidthUsage::kBwNormal;
   }
+  double kAggressiveRatio = 0.5;
+  if (modified_trend > threshold_ * kAggressiveRatio) {
+    hypothesis_aggresive_ = modified_trend / (threshold_ * kAggressiveRatio);
+  } else {
+    hypothesis_aggresive_ = 1.0f;
+  }
+  RTC_LOG(LS_INFO) << "[TrendlineEstimator::Detect] "
+                   << "trend: " << trend
+                   << ", modified_trend: " << modified_trend
+                   << ", ts_delta: " << ts_delta
+                   << ", threshold: " << threshold_
+                   << ", time_over_using_: " << time_over_using_
+                   << ", overuse_counter_: " << overuse_counter_
+                   << ", hypothesis_: " << static_cast<int>(hypothesis_)
+                   << ", prev_trend_: " << prev_trend_
+                   << ", hypothesis_aggresive_: "
+                   << hypothesis_aggresive_
+                   << ", threshold * kAggressiveRatio: "
+                   << threshold_ * kAggressiveRatio;
   prev_trend_ = trend;
   UpdateThreshold(modified_trend, now_ms);
 }
@@ -320,11 +354,15 @@ void TrendlineEstimator::UpdateThreshold(double modified_trend,
                                          int64_t now_ms) {
   if (last_update_ms_ == -1)
     last_update_ms_ = now_ms;
-
   if (fabs(modified_trend) > threshold_ + kMaxAdaptOffsetMs) {
     // Avoid adapting the threshold to big latency spikes, caused e.g.,
     // by a sudden capacity drop.
     last_update_ms_ = now_ms;
+    RTC_LOG(LS_INFO) << "[TrendlineEstimator::UpdateThreshold] not update threshold:"
+                     << "modified_trend: " << modified_trend
+                     << ", threshold: " << threshold_
+                     << ", last_update_ms_: " << last_update_ms_
+                     << ", kAdaptOffsetMs: " << kMaxAdaptOffsetMs;
     return;
   }
 
@@ -334,6 +372,12 @@ void TrendlineEstimator::UpdateThreshold(double modified_trend,
   threshold_ += k * (fabs(modified_trend) - threshold_) * time_delta_ms;
   threshold_ = rtc::SafeClamp(threshold_, 6.f, 600.f);
   last_update_ms_ = now_ms;
+  RTC_LOG(LS_INFO) << "[TrendlineEstimator::UpdateThreshold] "
+                   << "modified_trend: " << modified_trend
+                   << ", threshold: " << threshold_
+                   << ", last_update_ms_: " << last_update_ms_
+                   << ", k: " << k
+                   << ", time_delta_ms: " << time_delta_ms;
 }
 
 }  // namespace webrtc

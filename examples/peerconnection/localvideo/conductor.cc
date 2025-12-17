@@ -145,7 +145,12 @@ bool Conductor::InitializePeerConnection() {
     signaling_thread_ = rtc::Thread::CreateWithSocketServer();
     signaling_thread_->Start();
   }
-  peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(
+  // vpx codec
+  // ************************************
+  bool use_vpx = false;
+  // ************************************
+  if (use_vpx) {
+    peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(
       nullptr /* network_thread */, nullptr /* worker_thread */,
       signaling_thread_.get(), nullptr /* default_adm */,
       webrtc::CreateBuiltinAudioEncoderFactory(),
@@ -163,6 +168,18 @@ bool Conductor::InitializePeerConnection() {
           webrtc::Dav1dDecoderTemplateAdapter
           >>(),
       nullptr /* audio_mixer */, nullptr /* audio_processing */);
+  } else {
+    peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(
+        nullptr /* network_thread */, nullptr /* worker_thread */,
+        signaling_thread_.get(), nullptr /* default_adm */,
+        webrtc::CreateBuiltinAudioEncoderFactory(),
+        webrtc::CreateBuiltinAudioDecoderFactory(),
+        std::make_unique<webrtc::VideoEncoderFactoryTemplate<
+            webrtc::OpenH264EncoderTemplateAdapter>>(),
+        std::make_unique<webrtc::VideoDecoderFactoryTemplate<
+            webrtc::OpenH264DecoderTemplateAdapter>>(),
+        nullptr /* audio_mixer */, nullptr /* audio_processing */);
+  }
 
   if (!peer_connection_factory_) {
     main_wnd_->MessageBox("Error", "Failed to initialize PeerConnectionFactory",
