@@ -15,7 +15,6 @@ from concurrent.futures import ThreadPoolExecutor
 from math import log10, sqrt
 
 ffmpeg_path = "ffmpeg"
-mahimahi_path = ""
 fps = 30
 
 ## Generate qrcode and overlay to video
@@ -45,6 +44,16 @@ def gen_qrcode(cfg, num):
 def overlay_qrcode_to_video(cfg):
     video_path = "../data/" + cfg.data + ".yuv"
 
+    if not os.path.exists(video_path):
+        mp4_video_path = "../data/" + cfg.data + ".mp4"
+        if not os.path.exists(mp4_video_path):
+            sys.exit(f"Error: {video_path} not exsist!")
+        else:
+            os.system(f"ffmpeg -i {mp4_video_path} {video_path} -y")
+
+    if not os.path.exists(video_path):
+        sys.exit(f"Error: {video_path} not exsist!")
+
     file_stats = os.stat(video_path)
     i420_frame_size = 3 * cfg.width * cfg.height / 2
     frame_count = int(file_stats.st_size / i420_frame_size)
@@ -52,9 +61,9 @@ def overlay_qrcode_to_video(cfg):
     print(f'Frame count: {frame_count}')
 
     send_pic = "../send/" + cfg.data
-    
+
     if os.path.exists(send_pic):
-      return
+    return
 
     gen_qrcode(cfg, frame_count)
     os.system("mkdir -p "+send_pic)
@@ -154,37 +163,6 @@ def extract_rate_and_framesize(recv_dir):
 
     return rate_time, rate, frame_size_time, frame_size
 
-def match_rate_with_frame_index(rate_file, frame_index_file, output_file):
-    rate_time = []
-    rate = []
-    with open(rate_file, "r") as f:
-        for lines in f.readlines():
-            line = lines.split(",")
-            rate_time.append(line[0])
-            rate.append(line[1])
-
-    rate_current_index = 0
-
-    f_output = open(output_file, "w")
-
-    with open(frame_index_file, "r") as f:
-        for lines in f.readlines():
-            line = lines.split(",")
-            frame_index = line[0]
-            time = int(line[2])
-
-            if rate_current_index >= len(rate_time):
-                f_output.write(str(frame_index) + ',' + str(rate[len(rate) - 1]) + '\n')
-
-            for i in range(rate_current_index, len(rate_time) - 1):
-                if time < int(rate_time[i + 1]):
-                    rate_current_index = i
-                    # print(i, frame_index, time, rate[i], rate_time[i + 1])
-                    f_output.write(str(frame_index) + ',' + str(time) + ',' + str(rate[i]) + '\n')
-                    break
-
-    f_output.close()
-
 def CalculateOverallDelay(rec_dir, res_dir):
     frame_size_file = os.path.join(rec_dir, 'frame_size_original_timestamp.log')
     end_stamp_file = os.path.join(rec_dir, 'end_stamp.log')
@@ -234,14 +212,12 @@ def calc_delay_framesize_rate(recv_dir, res_dir):
     frame_size_file = res_dir + "frame_size.log"
     delay_file = res_dir + "delay.log"
     rate_file = res_dir + "rate.log"
-    rate_with_frame_index_file = res_dir + "rate_with_frame_index.log"
 
     os.system("rm -f " + start_time_stamp_file)
     os.system("rm -f " + end_time_stamp_file)
     os.system("rm -f " + frame_size_file)
     os.system("rm -f " + delay_file)
     os.system("rm -f " + rate_file)
-    os.system("rm -f " + rate_with_frame_index_file)
 
     end_stamp_command = "grep \"Time Stamp\" " + recv_file + " | awk \'{print $4}\' > " + end_time_stamp_file
     start_stamp_command = "grep \"Time Stamp\" " + send_file + " | awk \'{print $4}\' > " + start_time_stamp_file
@@ -271,8 +247,6 @@ def calc_delay_framesize_rate(recv_dir, res_dir):
     write_data_to_file([range(1, len(end_frame_idx) + 1), end_frame_idx, frame_size_time, frame_size, frame_size_bitrate], frame_size_file)
     write_data_to_file([rate_time, rate], rate_file)
     write_data_to_file([range(1, len(end_frame_idx) + 1), end_frame_idx, time_stamp_end, frame_delay], delay_file)
-
-    match_rate_with_frame_index(rate_file, frame_size_file, rate_with_frame_index_file)
 
     overall_delay = CalculateOverallDelay(recv_dir, res_dir)
 
@@ -405,22 +379,24 @@ def generate_vmaf_result(original_raw_frames_dir, rec_dir, res_dir, width, heigh
 
 def decode_recv_video(cfg):
     re_extract_images = True
-    root_directory = os.path.dirname(os.getcwd()) + "/"
-    recv_dir = root_directory + "result/" + cfg.output_dir + "/rec/"
-    res_dir = root_directory + "result/" + cfg.output_dir + "/res/"
+    root_dir = os.path.dirname(os.getcwd()) + "/"
+    recv_dir = f"{root_dir}result/{cfg.data}/rec/"
+    res_dir = f"{root_dir}result/{cfg.data}/res/"
+
+    os.system("mkdir -p " + res_dir)
 
     recv_video_path = recv_dir + "recon.yuv"
     recv_raw_frames_dir = recv_dir + "raw_frames/"
 
-    send_raw_frames_dir = root_directory + "send/" + cfg.data + "/"
+    send_raw_frames_dir = root_dir + "send/" + cfg.data + "/"
     receive_correspoding_file = res_dir + "receive_correspoding_index.log"
 
     if re_extract_images:
         os.system("rm -rf " + recv_raw_frames_dir)
         os.system("mkdir -p " + recv_raw_frames_dir)
         # Extract all frames from recevied yuv file
-        ffmpeg_command = ffmpeg_path + " -r " + str(fps) + " -s " + str(cfg.width) + "x" + str(cfg.height) + " -i " +\
-                            recv_video_path + " " + recv_raw_frames_dir + "/frame%d.png -y"
+        ffmpeg_command = f"{ffmpeg_path} -r {fps} -s {cfg.width}x{cfg.height} \
+          									-i {recv_video_path} {recv_raw_frames_dir}/frame%d.png -y"
         os.system(ffmpeg_command)
     received_frame_cnt = len(os.listdir(recv_raw_frames_dir))
 
@@ -457,66 +433,48 @@ def kill_process(process):
     process.wait()
     os.killpg(process.pid,signal.SIGKILL)
 
-def run_receive_process(client_bin, recv_file, server_ip, port, recv_dir, trace_file):
-    # if enalbe mahimahi, need to explicit set server_ip and port
-    enable_mahimahi_limit = True
-    enable_screenshot = False
-    
-    if enable_screenshot:
-        recv_command = client_bin + " --gui --recon " + recv_file + " --server " + server_ip + " --port " + port + \
-            " > " + recv_dir + "recv.log 2>&1 &\n"
-        xvfb_display_command = "export DISPLAY=:100 && Xvfb :100 -screen 0 1280x720x24&"
-        recv_process = start_process(xvfb_display_command + " && " + recv_command)
-        # subprocess.run(recv_command)
-        # ffmpeg_command = "ffmpeg -video_size 1280x720 -framerate 30 -f x11grab -i :100 -r 30 -y output.mp4&"
-        # screenshot_process = start_process(ffmpeg_command)
-    else:
-        recv_command = client_bin + " --recon " + recv_file + " --server " + server_ip + " --port " + port + \
-            " > " + recv_dir + "recv.log 2>&1 &\n"
-        recv_process = -1
-
-    trace_logs_file = "../file/trace_logs/" + trace_file + ".log"
-    mahimahi_command = mahimahi_path + "mm-link " + str(trace_logs_file) + " " + str(trace_logs_file)# + mahimahi_path + "mm-loss-trace " +\
-        #"downlink --trace-file=../file/loss_trace"
-
-    if enable_mahimahi_limit:
-        if recv_process == -1:
-            recv_process = start_process(mahimahi_command)
-        else:
-            recv_process.stdin.write(mahimahi_command.encode())
-            recv_process.stdin.flush()
-            time.sleep(1)
-        recv_process.stdin.write(recv_command.encode())
-        recv_process.stdin.flush()
-        time.sleep(1)
-    else:
-        if recv_process == -1:
-            recv_process = start_process(recv_command)
-        else:
-            # subprocess.run(recv_command)
-            recv_process.stdin.write(recv_command.encode())
-            recv_process.stdin.flush()
-        time.sleep(1)
-    return recv_process
-
-
-def output_tail_result(f_result_csv_file, data, ratio):
+def generate_tail_result(data, ratio):
     data.sort()
     data_len = len(data)
     tail_data = data[int(data_len * (1 - ratio)):]
     mean_tail_data = np.mean(tail_data)
-    f_result_csv_file.write(str(mean_tail_data))
     return mean_tail_data
 
-def output_head_result(f_result_csv_file, data, ratio):
-    data.sort()
-    data_len = len(data)
-    head_data = data[:int(data_len * ratio)]
-    mean_head_data = np.mean(head_data)
-    f_result_csv_file.write(str(mean_head_data))
-    return mean_head_data
+def send_and_recv_video(cfg):
+    root_dir = os.path.dirname(os.path.dirname(os.getcwd())) + "/"
 
-def output_statistic_result(f_res_overal_file, f_result_csv_file, delay, drop_frames_index, prefix, vmaf_scores, overall_delay):
+    client_bin = root_dir + "out/Default/peerconnection_localvideo"
+    send_bin = root_dir + "out/Default/peerconnection_localvideo"
+    
+    server_ip = cfg.server_ip
+    port = cfg.server_port
+
+    recv_dir = f"{root_dir}my_experiment/result/{cfg.data}/rec/"
+    recv_file = f"{recv_dir}recon.yuv"
+    send_video_path = f"{root_dir}my_experiment/data/{cfg.data}_qrcode.yuv"
+
+    server_command = f"{root_dir}out/Default/peerconnection_server --port {port} &"
+    send_command = f"{send_bin} --file {send_video_path} --height {cfg.height}\
+                                --width {cfg.width} --fps {fps}\
+                                --server {server_ip} --port {port}\
+                                --enable_mae {cfg.enable_mae} --disable_frame_drop {cfg.disable_frame_drop}"
+    recv_command = f"{client_bin} --recon {recv_file} --server {server_ip} --port {port}"
+
+    os.system("mkdir -p " + recv_dir)
+
+    server_process = start_process(server_command)
+    time.sleep(1)
+
+    recv_process = start_process(recv_command, recv_dir + "recv.log")
+    time.sleep(1)
+
+    send_process = start_process(send_command, recv_dir + "send.log")
+    send_process.wait()
+
+    kill_process(recv_process)
+    kill_process(server_process)
+
+    delay, drop_frames_index, vmaf_scores, overall_delay = decode_recv_video(cfg)
     delay = np.array(delay)
     vmaf_scores = np.array(vmaf_scores)
     overall_delay = np.array(overall_delay)
@@ -524,111 +482,12 @@ def output_statistic_result(f_res_overal_file, f_result_csv_file, delay, drop_fr
     avg_delay = np.mean(delay)
     avg_vmaf = np.mean(vmaf_scores)
     avg_overall_delay = np.mean(overall_delay)
-
-    f_res_overal_file.write("------------------- " + str(cfg.output_dir) + "--" + str(cfg.data) + " ---------------------------" + "\n")
-    f_res_overal_file.write(str(cfg.output_dir) + "," + str(avg_delay) + "," + str(len(drop_frames_index)) + "," + str(avg_vmaf) + str(avg_overall_delay) + "\n")
-    f_res_overal_file.write("Drop frames count: " + str(len(drop_frames_index)) + "\n")
-    f_res_overal_file.write("Drop frames index: " + str(drop_frames_index) + "\n")
-    f_res_overal_file.close()
-
-    f_result_csv_file.write(prefix + "," + str(avg_delay) + "," + str(len(drop_frames_index)) + ',')
-    avg_tail_delay = output_tail_result(f_result_csv_file, delay, 0.1)
-    avg_head_vmaf = generate_head_result(vmaf_scores, 0.1)
-    f_result_csv_file.write(f',{avg_vmaf},{avg_head_vmaf},{avg_overall_delay},')
-    avg_tail_overall_delay = output_tail_result(f_result_csv_file, overall_delay, 0.1)
-    f_result_csv_file.write("\n")
-    f_result_csv_file.close()
-
-    if not os.path.exists("../last_average_record.log"):
-        f_average_record_file = open("../last_average_record.log", "w")
-        f_average_record_file.write("0,0,0,0,0,0,0\n")
-        f_average_record_file.close()
-    datas = open("../last_average_record.log", 'r').read().split('\n')[0].split(',')
-    trails_count = int(datas[0])
-    last_trails_avg_delay = float(datas[1])
-    last_trails_avg_tail_delay = float(datas[2])
-    last_trails_avg_vmaf = float(datas[3])
-    last_trails_avg_head_vmaf = float(datas[4])
-    last_trails_avg_overall_delay = float(datas[5])
-    last_trails_avg_tail_overall_delay = float(datas[6])
-
-    new_trails_count = trails_count + 1
-    new_trails_avg_delay = (last_trails_avg_delay * trails_count + avg_delay) / new_trails_count
-    new_trails_avg_tail_delay = (last_trails_avg_tail_delay * trails_count + avg_tail_delay) / new_trails_count
-    new_trails_avg_vmaf = (last_trails_avg_vmaf * trails_count + avg_vmaf) / new_trails_count
-    new_trails_avg_head_vmaf = (last_trails_avg_head_vmaf * trails_count + avg_head_vmaf) / new_trails_count
-    new_trails_avg_overall_delay = (last_trails_avg_overall_delay * trails_count + avg_overall_delay) / new_trails_count
-    new_trails_avg_tail_overall_delay = (last_trails_avg_tail_overall_delay * trails_count + avg_tail_overall_delay) / new_trails_count
-
-    f_average_record_file = open("../last_average_record.log", "w")
-    f_average_record_file.write(str(new_trails_count) + ',' + str(new_trails_avg_delay) + ',' + str(new_trails_avg_tail_delay) + ',' + str(new_trails_avg_vmaf) + ',' + str(new_trails_avg_head_vmaf) + ',' + str(new_trails_avg_overall_delay) + ',' + str(new_trails_avg_tail_overall_delay) + '\n')
-
-    f_average_record_file = open("../average_records.log", "a")
-    f_average_record_file.write(prefix + ',' + str(new_trails_count) + ',' + str(new_trails_avg_delay) + ',' + str(new_trails_avg_tail_delay) + ',' + str(new_trails_avg_vmaf) + ',' + str(new_trails_avg_head_vmaf) + ',' + str(new_trails_avg_overall_delay) + ',' + str(new_trails_avg_tail_overall_delay) + '\n')
-
-    converged = False
-    if abs(new_trails_avg_vmaf - last_trails_avg_vmaf) < 0.5 and abs(new_trails_avg_head_vmaf - last_trails_avg_head_vmaf) < 0.5 and abs(new_trails_avg_tail_delay - last_trails_avg_tail_delay) < 0.5:
-        converged = True
-
-    return converged, new_trails_count, new_trails_avg_delay, new_trails_avg_tail_delay, new_trails_avg_vmaf, new_trails_avg_head_vmaf, new_trails_avg_overall_delay, new_trails_avg_tail_overall_delay
-
-def send_and_recv_video(cfg):
-    minQP = cfg.minQP
-    maxQP = cfg.maxQP
-    vbvRatio = cfg.vbvRatio
-    codecMode = cfg.codecMode
-
-    root_dir = "../../"
-    res_overall_dir = "../"
-    words = cfg.output_dir.split('/')
-
-    client_bin = root_dir + "out/Default/peerconnection_localvideo"
-    send_bin = root_dir + "out/Default/peerconnection_localvideo"
-
-    # Can custormize ip and port
-    server_ip = "100.64.10.1"
-    port = "24222"
-
-    recv_dir = "../result/" + cfg.output_dir + "/rec/"
-    recv_file = recv_dir + "recon.yuv"
-    send_video_path = "../data/" + cfg.data + "_qrcode.yuv"
-
-    server_command = root_dir + "out/Default/peerconnection_server --port " + port + " &"
-    send_command = f"{send_bin} --file " + send_video_path + \
-        " --min_qp " + str(minQP) + " --max_qp " + str(maxQP) +\
-        " --vbv_buffer_ratio " + str(vbvRatio) +\
-        " --codec_choose " + str(codecMode) +\
-        " --height " + str(cfg.height) + " --width " + str(cfg.width) + " --fps " + str(fps) +\
-        " --server " + server_ip + " --port " + port
-
-    send_log_file = recv_dir + "send.log"
-
-    os.system("mkdir -p " + recv_dir)
-    os.system("mkdir -p " + res_overall_dir)
-
-    f_res_overal_file = open(res_overall_dir + "every_trail_statistics.log", "a")
-    f_result_csv_file = open(res_overall_dir + "every_trail_statistics.csv", "a")
-
-    server_process = start_process(server_command)
-    time.sleep(1)
-
-    recv_process = run_receive_process(client_bin, recv_file, server_ip, port, recv_dir, str(words[1]))
-
-    send_process = start_process(send_command, send_log_file)
-    send_process.wait()
-
-    kill_process(recv_process)
-    kill_process(server_process)
-
-    delay, drop_frames_index, vmaf_scores, overall_delay = decode_recv_video(cfg)
-    prefix = str(cfg.data) + ',' + str(words[1]) + ',' + str(words[2])
-    converged, count, avg_delay, avg_tail_delay, avg_vmaf, avg_head_vmaf, avg_overall_delay, avg_tail_overall_delay = output_statistic_result(f_res_overal_file, f_result_csv_file, delay, drop_frames_index, prefix, vmaf_scores, overall_delay)
-
-    if converged:
-        f_parameter_record_file = open("../parameter_result.log", "a")
-        f_parameter_record_file.write(prefix + ',' + str(count) + ',' + str(avg_delay) + ',0,0,' + str(avg_tail_delay) + ',' + str(avg_vmaf) + ',' + str(avg_head_vmaf) + ',' + str(avg_overall_delay) + ',' + str(avg_tail_overall_delay) + '\n')
-
-    return converged
+    
+    print(f"----------- Current result for {cfg.data} is: ---------------")
+    print(f"Average Delay: {avg_delay}, Tail 10% Delay: {generate_tail_result(delay.tolist(), 0.1)}")
+    print(f"Average Overall Delay: {avg_overall_delay}, Tail 10% Overall Delay: {generate_tail_result(overall_delay.tolist(), 0.1)}")
+    print("Average VMAF: ", avg_vmaf)
+    print("Drop frames count: ", len(drop_frames_index))
 
 ## Show figure
 def show_multi_plot_fig(files, x_indexes, y_indexes, labels, x_label, y_label, fig_file, start_index = 0, end_index = 10000):
@@ -686,11 +545,11 @@ def show_experiment_fig(data_file, fig_file, x_index, y_index, label, x_label, s
     plt.savefig(fig_file, bbox_inches = 'tight', pad_inches = 0.1)
 
 def show_fig(cfg):
-    fig_dir = "../result/" + cfg.output_dir + "/fig/"
+    fig_dir = f"../result/{cfg.data}/fig/"
     os.system("rm -rf " + fig_dir)
     os.system("mkdir -p " + fig_dir)
 
-    res_dir = "../result/" + cfg.output_dir + "/res/"
+    res_dir = f"../result/{cfg.data}/res/"
     vmaf_log_file = res_dir + "vmaf_score.log"
     frame_size_file = res_dir + "frame_size.log"
     rate_file_with_frame_index = res_dir + "rate_with_frame_index.log"
@@ -709,13 +568,12 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--option", type=str)
     parser.add_argument("--data", type=str)
-    parser.add_argument("--minQP", type=int)
-    parser.add_argument("--maxQP", type=int)
-    parser.add_argument("--vbvRatio", type=float)
-    parser.add_argument("--codecMode", type=int)
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
-    parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--server_ip", type=str)
+    parser.add_argument("--server_port", type=str)
+    parser.add_argument("--enable_mae", type=int, default=1)
+    parser.add_argument("--disable_frame_drop", type=int, default=0)
 
     return parser.parse_args()
 
@@ -724,16 +582,7 @@ if __name__ == "__main__":
     if cfg.option == "gen_send_video":
         overlay_qrcode_to_video(cfg)
     elif cfg.option == "send_and_recv":
-        converged = send_and_recv_video(cfg)
-        if converged:
-            sys.exit(1)
-    elif cfg.option == "decode_recv_video":
-        delay, drop_frames_index, vmaf_scores = decode_recv_video(cfg)
-        f_res_overal_file = open("../every_trail_statistics.log", "a")
-        f_result_csv_file = open("../every_trail_statistics.csv", "a")
-        words = cfg.output_dir.split('/')
-        prefix = str(cfg.data) + ',' + str(words[1]) + ',' + str(words[2])
-        converged = output_statistic_result(f_res_overal_file, f_result_csv_file, delay, drop_frames_index, prefix, vmaf_scores)
+        send_and_recv_video(cfg)
     elif cfg.option == "show_fig":
         show_fig(cfg)
     else:

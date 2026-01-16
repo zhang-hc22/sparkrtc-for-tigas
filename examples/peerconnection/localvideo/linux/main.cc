@@ -37,6 +37,8 @@ double local_vbv_buffer_ratio;
 double local_codec_choose;
 bool is_sender = false;
 bool is_GUI = false;
+bool enable_mae = true;
+bool disable_frame_drop = true;
 class CustomSocketServer : public rtc::PhysicalSocketServer {
  public:
   explicit CustomSocketServer(GtkMainWnd* wnd)
@@ -138,6 +140,11 @@ int main(int argc, char* argv[]) {
   local_vbv_buffer_ratio = absl::GetFlag(FLAGS_vbv_buffer_ratio);
   local_codec_choose = absl::GetFlag(FLAGS_codec_choose);
   is_GUI = absl::GetFlag(FLAGS_gui);
+  enable_mae = absl::GetFlag(FLAGS_enable_mae);
+  disable_frame_drop = absl::GetFlag(FLAGS_disable_frame_drop);
+
+  rtc::SetEnableMAE(enable_mae);
+  rtc::SetDisableFrameDrop(disable_frame_drop);
   
   rtc::SetQPBounds(local_min_qp, local_max_qp);
   rtc::SetVBVBufferRatio(local_vbv_buffer_ratio);

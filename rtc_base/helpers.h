@@ -87,19 +87,10 @@ double CreateRandomDouble();
 // value and the current value.
 double GetNextMovingAverage(double prev_average, double cur, double ratio);
 
-void SetVBVBufferRatio(double ratio);
-
-void SetCodecChoose(int mode);
-
-void SetQPBounds(int min_qp, int max_qp);
-
-double GetVBVBufferRatio();
-
-int GetCodecChoose();
-
-int GetMinQP();
-
-int GetMaxQP();
+bool GetEnableMAE();
+void SetEnableMAE(bool enable);
+bool GetDisableFrameDrop();
+void SetDisableFrameDrop(bool disable);
 
 }  // namespace rtc
 

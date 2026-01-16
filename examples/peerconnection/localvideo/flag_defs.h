@@ -47,13 +47,9 @@ ABSL_FLAG(int,fps,kDefaultFps,"The fps of the video file to stream to the peer."
 
 ABSL_FLAG(bool,gui,kDefaultisGUI,"Graphical User Interface");
 
-ABSL_FLAG(int,min_qp,kMinQp,"The minimum QP value for the encoder.");
+ABSL_FLAG(bool,enable_mae,true,"Enable More Adaptive Encoder");
 
-ABSL_FLAG(int,max_qp,kMaxQp,"The maximum QP value for the encoder.");
-
-ABSL_FLAG(double,vbv_buffer_ratio,kDefaultVbvBufferRatio,"The VBV buffer ratio for the encoder.");
-
-ABSL_FLAG(int,codec_choose,kDefaultCodecChoose,"The codec mode for the encoder. 0: vp8, 1: av1 2: x264 original 3: Salsify 4: x264 adaptive 5: CBR");
+ABSL_FLAG(bool,disable_frame_drop,true,"Disable Frame Drop");
 
 ABSL_FLAG(int,
           port,
