@@ -63,7 +63,7 @@ def overlay_qrcode_to_video(cfg):
     send_pic = "../send/" + cfg.data
 
     if os.path.exists(send_pic):
-    return
+        return
 
     gen_qrcode(cfg, frame_count)
     os.system("mkdir -p "+send_pic)
@@ -139,6 +139,37 @@ def read_data_from_file(file, count, data_lists, seperator, strict_mode = True):
             for i in range(count):
                 data_lists[i].append(line[i])
 
+def match_rate_with_frame_index(rate_file, frame_index_file, output_file):
+    rate_time = []
+    rate = []
+    with open(rate_file, "r") as f:
+        for lines in f.readlines():
+            line = lines.split(",")
+            rate_time.append(line[0])
+            rate.append(line[1])
+
+    rate_current_index = 0
+
+    f_output = open(output_file, "w")
+
+    with open(frame_index_file, "r") as f:
+        for lines in f.readlines():
+            line = lines.split(",")
+            frame_index = line[0]
+            time = int(line[2])
+
+            if rate_current_index >= len(rate_time):
+                f_output.write(str(frame_index) + ',' + str(rate[len(rate) - 1]) + '\n')
+
+            for i in range(rate_current_index, len(rate_time) - 1):
+                if time < int(rate_time[i + 1]):
+                    rate_current_index = i
+                    # print(i, frame_index, time, rate[i], rate_time[i + 1])
+                    f_output.write(str(frame_index) + ',' + str(time) + ',' + str(rate[i]) + '\n')
+                    break
+
+    f_output.close()
+
 def extract_rate_and_framesize(recv_dir):
     send_log_file = recv_dir + "send.log"
     rate_stamp_file = recv_dir + "rate_timestamp.log"
@@ -212,12 +243,14 @@ def calc_delay_framesize_rate(recv_dir, res_dir):
     frame_size_file = res_dir + "frame_size.log"
     delay_file = res_dir + "delay.log"
     rate_file = res_dir + "rate.log"
+    rate_with_frame_index_file = res_dir + "rate_with_frame_index.log"
 
     os.system("rm -f " + start_time_stamp_file)
     os.system("rm -f " + end_time_stamp_file)
     os.system("rm -f " + frame_size_file)
     os.system("rm -f " + delay_file)
     os.system("rm -f " + rate_file)
+    os.system("rm -f " + rate_with_frame_index_file)
 
     end_stamp_command = "grep \"Time Stamp\" " + recv_file + " | awk \'{print $4}\' > " + end_time_stamp_file
     start_stamp_command = "grep \"Time Stamp\" " + send_file + " | awk \'{print $4}\' > " + start_time_stamp_file
@@ -247,6 +280,7 @@ def calc_delay_framesize_rate(recv_dir, res_dir):
     write_data_to_file([range(1, len(end_frame_idx) + 1), end_frame_idx, frame_size_time, frame_size, frame_size_bitrate], frame_size_file)
     write_data_to_file([rate_time, rate], rate_file)
     write_data_to_file([range(1, len(end_frame_idx) + 1), end_frame_idx, time_stamp_end, frame_delay], delay_file)
+    match_rate_with_frame_index(rate_file, frame_size_file, rate_with_frame_index_file)
 
     overall_delay = CalculateOverallDelay(recv_dir, res_dir)
 
@@ -342,7 +376,7 @@ def generate_head_result(data, ratio):
     mean_head_data = np.mean(head_data)
     return mean_head_data
 
-def read_json_file(rec_dir, vmaf_score_file, f_overall_vmaf_score):
+def read_json_file(rec_dir, vmaf_score_file):
     vmaf_score_json_file = f'{rec_dir}updated_recon_vmaf.json'
     f_vmaf_score = open(vmaf_score_file, 'w')
     vmaf_scores = []
@@ -355,10 +389,9 @@ def read_json_file(rec_dir, vmaf_score_file, f_overall_vmaf_score):
             vmaf_scores.append(float(frame['metrics']['vmaf']))
             f_vmaf_score.write(f"{frame['frameNum']},{frame['metrics']['vmaf']}\n")
         vmaf_scores = np.array(vmaf_scores)
-        f_overall_vmaf_score.write(f"{vmaf_mean},{vmaf_harmonic_mean},{generate_head_result(vmaf_scores, 0.1)},{generate_head_result(vmaf_scores, 0.2)},{generate_head_result(vmaf_scores, 0.3)},{generate_head_result(vmaf_scores, 0.5)}\n")
     return vmaf_scores
 
-def generate_vmaf_result(original_raw_frames_dir, rec_dir, res_dir, width, height, f_overall_vmaf_score):
+def generate_vmaf_result(original_raw_frames_dir, rec_dir, res_dir, width, height):
     vmaf_score_file = f'{res_dir}vmaf_score.log'
     if os.path.exists(vmaf_score_file):
         os.remove(vmaf_score_file)
@@ -366,7 +399,7 @@ def generate_vmaf_result(original_raw_frames_dir, rec_dir, res_dir, width, heigh
     sync_frames(original_raw_frames_dir, rec_dir, res_dir, width, height)
     calculate_vmaf_score(rec_dir, 'updated_send', 'updated_recon')
 
-    vmaf_scores = read_json_file(rec_dir, vmaf_score_file, f_overall_vmaf_score)
+    vmaf_scores = read_json_file(rec_dir, vmaf_score_file)
 
     updated_send_file_prefix = f'{rec_dir}updated_send'
     updated_rec_file_prefix = f'{rec_dir}updated_recon'
@@ -412,9 +445,7 @@ def decode_recv_video(cfg):
 
     calculate_send2receive_index(res_dir, send_raw_frames_dir, receive_correspoding_send_index)
 
-    f_overall_vmaf_file = open('../overall_vmaf_score.log', 'a+')
-    f_overall_vmaf_file.write(f"{cfg.data},{cfg.output_dir},")
-    vmaf_scores = generate_vmaf_result(send_raw_frames_dir, recv_dir, res_dir, cfg.width, cfg.height, f_overall_vmaf_file)
+    vmaf_scores = generate_vmaf_result(send_raw_frames_dir, recv_dir, res_dir, cfg.width, cfg.height)
 
     os.system("rm -rf " + recv_raw_frames_dir)
 

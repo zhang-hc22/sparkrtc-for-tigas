@@ -4,7 +4,7 @@ height=1080
 
 # Need to customize ip and port
 # IMPORTANT: Change server_ip to your machine's public IP address
-ip="143.89.79.104"
+ip="YOUR IP ADDRESS"
 port="8888"
 
 # Modify this if you want to disable MAE
@@ -57,5 +57,5 @@ elif [ $run_program == "send_and_recv" ]; then
                                   --width=$width --server_ip=$ip --server_port=$port\
                                   --enable_mae=$enable_mae --disable_frame_drop=$disable_frame_drop
   # Generate result figures
-  python3 process_video_qrcode.py --option=show_fig --data=$video_name --output_dir=${output_dir}
+  python3 process_video_qrcode.py --option=show_fig --data=$video_name
 fi
