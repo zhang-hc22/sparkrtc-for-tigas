@@ -135,20 +135,12 @@ int main(int argc, char* argv[]) {
   local_video_width = absl::GetFlag(FLAGS_width);
   local_video_height = absl::GetFlag(FLAGS_height);
   local_video_fps = absl::GetFlag(FLAGS_fps);
-  local_min_qp = absl::GetFlag(FLAGS_min_qp);
-  local_max_qp = absl::GetFlag(FLAGS_max_qp);
-  local_vbv_buffer_ratio = absl::GetFlag(FLAGS_vbv_buffer_ratio);
-  local_codec_choose = absl::GetFlag(FLAGS_codec_choose);
   is_GUI = absl::GetFlag(FLAGS_gui);
   enable_mae = absl::GetFlag(FLAGS_enable_mae);
   disable_frame_drop = absl::GetFlag(FLAGS_disable_frame_drop);
 
   rtc::SetEnableMAE(enable_mae);
   rtc::SetDisableFrameDrop(disable_frame_drop);
-  
-  rtc::SetQPBounds(local_min_qp, local_max_qp);
-  rtc::SetVBVBufferRatio(local_vbv_buffer_ratio);
-  rtc::SetCodecChoose(local_codec_choose);
 
   bool autocall = false;
   if (local_video_filename != "NONE") {

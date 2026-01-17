@@ -50,6 +50,7 @@
 #include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/thread_annotations.h"
 #include "rtc_base/trace_event.h"
+#include "rtc_base/helpers.h"
 #include "system_wrappers/include/metrics.h"
 #include "video/adaptation/video_stream_encoder_resource_manager.h"
 #include "video/alignment_adjuster.h"
@@ -1366,8 +1367,7 @@ void VideoStreamEncoder::ReconfigureEncoder() {
   //  * "WebRTC-FrameDropper" field trial is "Disabled".
 
   // Disable frame drop
-  bool disable_drop = true;
-  force_disable_frame_dropper_ = disable_drop ||
+  force_disable_frame_dropper_ = rtc::GetDisableFrameDrop() ||
       field_trials_.IsDisabled(kFrameDropperFieldTrial) ||
       (num_layers > 1 && codec.mode == VideoCodecMode::kScreensharing);
 
@@ -1608,11 +1608,12 @@ bool VideoStreamEncoder::EncoderPaused() const {
   // pacer queue has grown too large in buffered mode.
   // If the pacer queue has grown too large or the network is down,
   // `last_encoder_rate_settings_->encoder_target` will be 0.
-  // return !last_encoder_rate_settings_ ||
-  //        last_encoder_rate_settings_->encoder_target == DataRate::Zero();
-
-  // Disable frame drop
-  return false;
+  if (rtc::GetDisableFrameDrop()) {
+    // Disable frame drop
+    return false;
+  }
+  return !last_encoder_rate_settings_ ||
+         last_encoder_rate_settings_->encoder_target == DataRate::Zero();
 }
 
 void VideoStreamEncoder::TraceFrameDropStart() {
@@ -1683,7 +1684,7 @@ uint32_t VideoStreamEncoder::GetInputFramerateFps() {
     RTC_LOG(LS_INFO) << "[VideoStreamEncoder::GetInputFramerateFps()] use default_fps:" << default_fps;
     return default_fps;
   }
-  return 30;//*input_fps;
+  return *input_fps;
 }
 
 void VideoStreamEncoder::SetEncoderRates(
@@ -2261,7 +2262,9 @@ DataRate VideoStreamEncoder::UpdateTargetBitrate(DataRate target_bitrate,
   RTC_DCHECK_RUN_ON(&encoder_queue_);
   DataRate updated_target_bitrate = target_bitrate;
   // Disable frame drop
-  cwnd_reduce_ratio = 0;
+  if (rtc::GetDisableFrameDrop()) {
+    cwnd_reduce_ratio = 0;
+  }
 
   // Drop frames when congestion window pushback ratio is larger than 1
   // percent and target bitrate is larger than codec min bitrate.
@@ -2333,7 +2336,7 @@ void VideoStreamEncoder::OnBitrateUpdated(DataRate target_bitrate,
     encoder_->OnRttUpdate(round_trip_time_ms);
   }
 
-  uint32_t framerate_fps = 30;//GetInputFramerateFps();
+  uint32_t framerate_fps = GetInputFramerateFps();
   frame_dropper_.SetRates((target_bitrate.bps() + 500) / 1000, framerate_fps);
 
   EncoderRateSettings new_rate_settings{
@@ -2372,37 +2375,39 @@ void VideoStreamEncoder::OnBitrateUpdated(DataRate target_bitrate,
 
 bool VideoStreamEncoder::DropDueToSize(uint32_t source_pixel_count) const {
   // Disable frame drop
+  if (rtc::GetDisableFrameDrop()) {
+    return false;
+  }
+  if (!encoder_ || !stream_resource_manager_.DropInitialFrames() ||
+      !encoder_target_bitrate_bps_ ||
+      !stream_resource_manager_.SingleActiveStreamPixels()) {
+    return false;
+  }
+
+  int pixel_count = std::min(
+      source_pixel_count, *stream_resource_manager_.SingleActiveStreamPixels());
+
+  uint32_t bitrate_bps =
+      stream_resource_manager_.UseBandwidthAllocationBps().value_or(
+          encoder_target_bitrate_bps_.value());
+
+  absl::optional<VideoEncoder::ResolutionBitrateLimits> encoder_bitrate_limits =
+      GetEncoderInfoWithBitrateLimitUpdate(
+          encoder_->GetEncoderInfo(), encoder_config_, default_limits_allowed_)
+          .GetEncoderBitrateLimitsForResolution(pixel_count);
+
+  if (encoder_bitrate_limits.has_value()) {
+    // Use bitrate limits provided by encoder.
+    return bitrate_bps <
+           static_cast<uint32_t>(encoder_bitrate_limits->min_start_bitrate_bps);
+  }
+
+  if (bitrate_bps < 300000 /* qvga */) {
+    return pixel_count > 320 * 240;
+  } else if (bitrate_bps < 500000 /* vga */) {
+    return pixel_count > 640 * 480;
+  }
   return false;
-  // if (!encoder_ || !stream_resource_manager_.DropInitialFrames() ||
-  //     !encoder_target_bitrate_bps_ ||
-  //     !stream_resource_manager_.SingleActiveStreamPixels()) {
-  //   return false;
-  // }
-
-  // int pixel_count = std::min(
-  //     source_pixel_count, *stream_resource_manager_.SingleActiveStreamPixels());
-
-  // uint32_t bitrate_bps =
-  //     stream_resource_manager_.UseBandwidthAllocationBps().value_or(
-  //         encoder_target_bitrate_bps_.value());
-
-  // absl::optional<VideoEncoder::ResolutionBitrateLimits> encoder_bitrate_limits =
-  //     GetEncoderInfoWithBitrateLimitUpdate(
-  //         encoder_->GetEncoderInfo(), encoder_config_, default_limits_allowed_)
-  //         .GetEncoderBitrateLimitsForResolution(pixel_count);
-
-  // if (encoder_bitrate_limits.has_value()) {
-  //   // Use bitrate limits provided by encoder.
-  //   return bitrate_bps <
-  //          static_cast<uint32_t>(encoder_bitrate_limits->min_start_bitrate_bps);
-  // }
-
-  // if (bitrate_bps < 300000 /* qvga */) {
-  //   return pixel_count > 320 * 240;
-  // } else if (bitrate_bps < 500000 /* vga */) {
-  //   return pixel_count > 640 * 480;
-  // }
-  // return false;
 }
 
 void VideoStreamEncoder::OnVideoSourceRestrictionsUpdated(

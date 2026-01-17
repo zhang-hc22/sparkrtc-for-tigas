@@ -228,7 +228,10 @@ H264EncoderImpl::~H264EncoderImpl() {
 
 int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
                                     const VideoEncoder::Settings& settings) {
-  RTC_LOG(LS_INFO) << "H264EncoderImpl::InitEncode minQP:" << rtc::GetMinQP() << " maxQP:" << rtc::GetMaxQP() << " vbvBufferRatio:" << rtc::GetVBVBufferRatio();
+  RTC_LOG(LS_INFO) << "H264EncoderImpl::InitEncode enable_mae "
+                   << rtc::GetEnableMAE()
+                   << " disable_frame_drop "
+                   << rtc::GetDisableFrameDrop();
   ReportInit();
   if (!inst || inst->codecType != kVideoCodecH264) {
     ReportError();
@@ -314,14 +317,13 @@ int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
   // param_.rc.i_rc_method = X264_RC_CRF;
   // param_.rc.f_rf_constant = 23;
 
-  // TODO: -menghua how to set initial bitrate?
   int bitrate_kbps = 3000;
   param_.rc.i_bitrate = bitrate_kbps;
   param_.rc.i_vbv_max_bitrate = bitrate_kbps;
   param_.rc.i_vbv_buffer_size = bitrate_kbps * 0.5;
 
-  param_.rc.i_qp_min = rtc::GetMinQP();
-  param_.rc.i_qp_max = rtc::GetMaxQP();
+  param_.rc.i_qp_min = 2;
+  param_.rc.i_qp_max = 51;
   // param_.i_bframe = 0;
   // param_.b_open_gop = 0;
   // param_.i_bframe_pyramid = 0;
@@ -482,7 +484,6 @@ int32_t H264EncoderImpl::RegisterEncodeCompleteCallback(
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
-static int set_rate_count = 0;
 void H264EncoderImpl::SetRates(const RateControlParameters& parameters) {
   if (encoder_ == NULL) {
     RTC_LOG(LS_WARNING) << "SetRates() while uninitialized.";
@@ -515,33 +516,22 @@ void H264EncoderImpl::SetRates(const RateControlParameters& parameters) {
       configurations_[i].SetStreamState(true);
       param_.rc.i_bitrate = bitrate_kbps;
       param_.rc.i_vbv_max_bitrate = bitrate_kbps;
+      param_.rc.i_vbv_buffer_size = bitrate_kbps * 0.5;
+      param_.i_fps_num = static_cast<int>(parameters.framerate_fps);
 
-      int codec_mode = rtc::GetCodecChoose();
-      double vbv_ratio = 0.5;
-      if (codec_mode >= 4) {
-        // x264 adaptive
-        double overuse_threshold = 2.0;
-        if (parameters.is_overused_for_encoder > overuse_threshold) {
-          vbv_ratio = 0.04;
-        }
-      } else if (codec_mode == 3) {
-        // salsify
-        vbv_ratio = 0.04;
-      } else if (codec_mode != 2) {
-        // Error!
-        RTC_LOG(LS_ERROR) << "H264EncoderImpl::SetRates() invalid codec mode " << codec_mode;
+      if (rtc::GetEnableMAE() && parameters.is_overused_for_encoder > 2.0) {
+        double vbv_ratio = std::ceil(1 / param_.i_fps_num * 100) / 100;
+        param_.rc.i_vbv_buffer_size = bitrate_kbps * vbv_ratio;
+        RTC_LOG(LS_INFO) << "H264EncoderImpl::SetRates() MAE adjusted vbv_ratio "
+                   << vbv_ratio << " new vbv_buffer_size " << param_.rc.i_vbv_buffer_size;
       }
-      param_.rc.i_vbv_buffer_size = bitrate_kbps * vbv_ratio;
 
-      set_rate_count++;
-      param_.i_fps_num = 30;//static_cast<int>(parameters.framerate_fps);
       RTC_LOG(LS_INFO) << "H264EncoderImpl::SetRates() "
                  << "target_bps: " << param_.rc.i_bitrate
                  << " max_bitrate: " << param_.rc.i_vbv_max_bitrate
                  << " vbv_buffer_size: " << param_.rc.i_vbv_buffer_size
                  << " fps_num: " << param_.i_fps_num
-                 << " overused_for_encoder: " << parameters.is_overused_for_encoder
-                 << " vbv_ratio: " << vbv_ratio;
+                 << " overused_for_encoder: " << parameters.is_overused_for_encoder;
       x264_encoder_reconfig(encoder_, &param_);
       // Update h264 encoder.
       //   SBitrateInfo target_bitrate;
@@ -755,7 +745,7 @@ VideoEncoder::EncoderInfo H264EncoderImpl::GetEncoderInfo() const {
   info.supports_native_handle = false;
   info.implementation_name = "OpenH264";
   info.scaling_settings =
-      VideoEncoder::ScalingSettings(rtc::GetMinQP(), rtc::GetMaxQP());
+      VideoEncoder::ScalingSettings(2, 51);
   info.is_hardware_accelerated = false;
   info.supports_simulcast = true;
   info.preferred_pixel_formats = {VideoFrameBuffer::Type::kI420};
