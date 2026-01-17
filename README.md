@@ -222,7 +222,8 @@ The script provides following inputs:
 
 The script uses the following parameters:
 
-•	`enable_mae`: Default set to `true`. Makes the encoder more adaptive to network changes. 
+•	`enable_mae`: Default set to `true`. Makes the encoder more adaptive to network changes.
+
 •	`disable_frame_drop`: Default set to `true`. Different frame drops will influence the result fairness, so we disable it by default.
 
 
