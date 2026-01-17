@@ -80,12 +80,13 @@ class MainWnd : public MainWindow {
     UI_THREAD_CALLBACK = WM_APP + 1,
   };
 
-  MainWnd(const char* server, int port, bool auto_connect, bool auto_call);
+  MainWnd(const char* server, int port, bool auto_call);
   ~MainWnd();
 
   bool Create();
   bool Destroy();
   bool PreTranslateMessage(MSG* msg);
+  void AutoConnect();
 
   virtual void RegisterObserver(MainWndCallback* callback);
   virtual bool IsWindow();
@@ -112,73 +113,26 @@ class MainWnd : public MainWindow {
                   webrtc::VideoTrackInterface* track_to_render);
     virtual ~VideoRenderer();
 
-    void Lock() { ::EnterCriticalSection(&buffer_lock_); }
-
-    void Unlock() { ::LeaveCriticalSection(&buffer_lock_); }
-
     // VideoSinkInterface implementation
     void OnFrame(const webrtc::VideoFrame& frame) override;
 
-    const BITMAPINFO& bmi() const { return bmi_; }
     const uint8_t* image() const { return image_.get(); }
 
    protected:
     void SetSize(int width, int height);
 
-    enum {
-      SET_SIZE,
-      RENDER_FRAME,
-    };
-
     HWND wnd_;
-    BITMAPINFO bmi_;
     std::unique_ptr<uint8_t[]> image_;
-    CRITICAL_SECTION buffer_lock_;
+    int width_;
+    int height_;
+    FILE* file_;
     rtc::scoped_refptr<webrtc::VideoTrackInterface> rendered_track_;
   };
 
-  // A little helper class to make sure we always to proper locking and
-  // unlocking when working with VideoRenderer buffers.
-  template <typename T>
-  class AutoLock {
-   public:
-    explicit AutoLock(T* obj) : obj_(obj) { obj_->Lock(); }
-    ~AutoLock() { obj_->Unlock(); }
-
-   protected:
-    T* obj_;
-  };
-
  protected:
-  enum ChildWindowID {
-    EDIT_ID = 1,
-    BUTTON_ID,
-    LABEL1_ID,
-    LABEL2_ID,
-    LISTBOX_ID,
-  };
-
-  void OnPaint();
-  void OnDestroyed();
-
-  void OnDefaultAction();
-
-  bool OnMessage(UINT msg, WPARAM wp, LPARAM lp, LRESULT* result);
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
   static bool RegisterWindowClass();
-
-  void CreateChildWindow(HWND* wnd,
-                         ChildWindowID id,
-                         const wchar_t* class_name,
-                         DWORD control_style,
-                         DWORD ex_style);
-  void CreateChildWindows();
-
-  void LayoutConnectUI(bool show);
-  void LayoutPeerListUI(bool show);
-
-  void HandleTabbing();
 
  private:
   std::unique_ptr<VideoRenderer> local_renderer_;
@@ -186,21 +140,13 @@ class MainWnd : public MainWindow {
   UI ui_;
   HWND wnd_;
   DWORD ui_thread_id_;
-  HWND edit1_;
-  HWND edit2_;
-  HWND label1_;
-  HWND label2_;
-  HWND button_;
-  HWND listbox_;
-  bool destroyed_;
-  void* nested_msg_;
   MainWndCallback* callback_;
   static ATOM wnd_class_;
   std::string server_;
   std::string port_;
-  bool auto_connect_;
   bool auto_call_;
 };
+
 #endif  // WIN32
 
 #endif  // EXAMPLES_PEERCONNECTION_LOCALVIDEO_MAIN_WND_H_

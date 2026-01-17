@@ -16,7 +16,9 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#if not defined(WEBRTC_WIN)
 #include <unistd.h>
+#endif
 #include "absl/memory/memory.h"
 #include "absl/types/optional.h"
 #include "api/audio/audio_mixer.h"
@@ -157,12 +159,14 @@ bool Conductor::InitializePeerConnection() {
           webrtc::LibvpxVp8EncoderTemplateAdapter,
           webrtc::LibvpxVp9EncoderTemplateAdapter,
           webrtc::OpenH264EncoderTemplateAdapter,
-          webrtc::LibaomAv1EncoderTemplateAdapter>>(),
+          webrtc::LibaomAv1EncoderTemplateAdapter
+          >>(),
       std::make_unique<webrtc::VideoDecoderFactoryTemplate<
           webrtc::LibvpxVp8DecoderTemplateAdapter,
           webrtc::LibvpxVp9DecoderTemplateAdapter,
           webrtc::OpenH264DecoderTemplateAdapter,
-          webrtc::Dav1dDecoderTemplateAdapter>>(),
+          webrtc::Dav1dDecoderTemplateAdapter
+          >>(),
       nullptr /* audio_mixer */, nullptr /* audio_processing */);
   } else {
     peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(
@@ -420,7 +424,9 @@ void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
       peer_connection_->CreateAnswer(
           this, webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
     }
+  #if not defined(WEBRTC_WIN)
     usleep(10000);
+  #endif
   } else {
     RTC_LOG(LS_INFO) << "else3";
     std::string sdp_mid;

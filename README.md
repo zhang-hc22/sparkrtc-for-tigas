@@ -1,22 +1,23 @@
+
 # SparkRTC
 
 SparkRTC is built on WebRTC.
 The major difference is the goal -- SparkRTC is designed for ultra low latency, with coordinations across a series of modules in WebRTC.
+SparkRTC follows the license of WebRTC, and is open-source, free to use, and only for research purpose.
 
 **WebRTC is a free, open software project** that provides browsers and mobile
 applications with Real-Time Communications (RTC) capabilities via simple APIs.
 The WebRTC components have been optimized to best serve this purpose.
 
-**Our mission:** To enable rich, high-quality RTC applications to be
-developed for the browser, mobile platforms, and IoT devices, and allow them
-all to communicate via a common set of protocols.
-
-The WebRTC initiative is a project supported by Google, Mozilla and Opera,
-amongst others.
-
 ## Before You Start
 
 First, be sure to install the [prerequisite software](https://webrtc.github.io/webrtc-org/native-code/development/prerequisite-sw/).
+
+Generally, we need to install the [depot_tools](https://commondatastorage.googleapis.com/chrome-infra-docs/flat/depot_tools/docs/html/depot_tools_tutorial.html#_setting_up).
+```
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+export PATH=/path/to/depot_tools:$PATH
+```
 
 
 ## Getting the Code
@@ -26,22 +27,22 @@ For desktop development:
 Clone the current repo:
 
 ```
-git clone https://github.com/hkust-spark/sparkrtc.git
+git clone https://github.com/hkust-spark/sparkrtc-public.git
 ```
 
 Enter the root directory of the repo:
 
 ```
-cd ./sparkrtc
+cd ./sparkrtc-public
 ```
 
-Clone the submodules ([openh264](https://github.com/hkust-spark/openh264) and [ffmpeg](https://github.com/hkust-spark/openh264)), which are also modified by us:
+Clone the submodules:
 
 ```
 git submodule update --init --recursive
 ```
 
-Sync with other WebRTC-related repos using the `gclient` tool installed before.
+Sync with other WebRTC-related repos using the `gclient` tool installed before. This may take 10 to 20 minutes, depending on the network speed.
 
 ```
 gclient sync
@@ -107,9 +108,9 @@ Start any number of `peerconnection_clients` and connect them to the server. The
 
 For more guidelines, see [here](https://webrtc.github.io/webrtc-org/native-code/development/).
 
-# Local Video Guidelines
+# Local Video Example Guidelines
 
-We implemented a ``peerconnection_localvideo`` example modified from ``peerconnection_client`` on MacOS and Linux for testing purposes. It streams s local video sequence (YUV420) instead of capturing from cameras. The GUI is optionally removed for command line testing.
+We implemented a ``peerconnection_localvideo`` example modified from ``peerconnection_client`` on MacOS and Linux for automatic testing. It streams raw local video files (YUV420) instead of capturing from cameras. The GUI is optionally removed for command line testing.
 
 
 ## CLI Options:
@@ -133,6 +134,10 @@ By default, the GUI is turned off. Add ```--gui``` on receiver to open the rende
 ./peerconnection_localvideo --gui --recon "recon.yuv"
 ```
 
+If it's running on Windows system, the parameter need to use '=' to connect, e.g.
+```
+./peerconnection_localvideo --gui --recon="recon.yuv"
+```
 
 3. Start the sender(Should after receiver) with information of yuv file to be streamed.
 
@@ -148,15 +153,7 @@ All prerequisites of the SparkRTC are needed.
 
 Also,
 
-download and install our version of `mahimahi` and `ffmpeg`.
-
-```bash
-git clone https://github.com/hkust-spark/ffmpeg.git
-cd ffmpeg
-./configure
-make
-make install
-```
+download and install  `ffmpeg`, and if using Linux, download `mahimahi`.
 
 ```bash
 git clone https://github.com/LW945/mahimahi.git
@@ -257,71 +254,41 @@ For example:
 3500,0.1
 ```
 
-## One-tap Experiments Usage
+## One-tap Experiments
 
 Using `sparkrtc/my_experiment/code/run.sh` can run several experiments at once to make the process easier.
 
-**Usage**
+**run.sh Usage**
 
+First generate video with qrcode.
 ```bash
-./run.sh [-i <video_name>] [-p <program_name>] [-s <{width}x{height}]
-./run.sh -i video_0a86 -p all -s 1920x1080"
+./run.sh -i <data>.yuv -p gen_send_video
+# For example
+./run.sh -i video_0a86_qrcode.yuv  -p gen_send_video
 ```
-**Input**
 
-The script provides following inputs:
+Then run the send program.
+```bash
+./run.sh -i <data>.yuv -p all
+# For example
+./run.sh -i video_0a86_qrcode.yuv  -p all
+```
 
-•	<video_name>: prefix of input yuv file
+### Detailed Usage
 
-•	<program_name>: the program will be run, including all(run all following programs), gen_send_video, send_and_recv, decode_recv_video and show_fig"
-
-•	<size>: (optional) custormize input file width and height, default is 1920x1080
-
-**Parameters**
-
-The script uses the following parameters:
-
-•	burst_length=2: The length of the burst for the experiment.
-
-•	lr=10: The loss rate for the experiment.
-
-•	method_type: This varies between 1 and 2, representing different experiment methods, 2 is our approach, and 1 is the baseline.
-
-•	method_val: This varies depending on the method_type.
-
-•	In the example, for method_type=2, method_val ranges from 40 to 130 in step 10 (these can all be modified).
-
-•	In the example, for method_type=1, method_val ranges from 1 to 3 (These can all be modified).
-
-•	data=video_0a86: The dataset used for the experiment.
-
-## Detailed Usage
-
-The process_video_qrcode.py can be run with different options to perform various tasks. The options are:
+The script - process_video_qrcode.py - can be run with different options to perform various tasks. The options are:
 
 1. gen_send_video: Generate video with QR codes.
-2. send_and_recv: Send video and receive it, then process the results.
-3. decode_recv_video: Decode received video and calculate metrics.
-4. show_fig: Generate figures from experiment results.
+2. decode_recv_video: Decode received video and calculate metrics.
+3. show_fig: Generate figures from experiment results.
+4. send_and_recv: Send video and receive it, then process the results.
 
 #### **Generating Video with QR Codes**
 
 To generate a video with QR codes embedded in the frames:
 
 ```bash
-./run.sh -i <video_name> -p gen_send_video
-or
 python3 process_video_qrcode.py --option=gen_send_video --data=<video_name>
-```
-
-#### **Sending and Receiving Video**
-
-To send a video and receive it, then process the received video:
-
-```bash
-./run.sh -i <video_name> -p send_and_recv
-or
-python process_video_qrcode.py --option=send_and_recv --data=<video_name> --loss_rate=<loss_rate> --method_val=<method_val> --method_type=<method_type> --burst_length=<burst_length>
 ```
 
 #### **Decoding Received Video**
@@ -329,19 +296,21 @@ python process_video_qrcode.py --option=send_and_recv --data=<video_name> --loss
 To decode the received video and calculate SSIM and delay:
 
 ```bash
-./run.sh -i <video_name> -p decode_recv_video
-or
 python3 process_video_qrcode.py --option=decode_recv_video --data=<video_name>
 ```
-
 #### **Generating Figures**
 
 To generate figures based on the experiment results:
 
 ```bash
-./run.sh -i <video_name> -p show_fig
-or
 python3 process_video_qrcode.py --option=show_fig --data=<video_name>
+```
+#### **Sending and Receiving Video**
+
+To send a video and receive it, then process the received video:
+
+```bash
+python process_video_qrcode.py --option=send_and_recv --data=<video_name>
 ```
 
 ## Output Results
@@ -351,47 +320,46 @@ python3 process_video_qrcode.py --option=show_fig --data=<video_name>
 The output results from the experiments are generally stored in the following directory structure:
 
 ```bash
-project_root/
-├── data/
-│   ├── <video_name>/
-│   │   ├── <video_name>.yuv
-│   │   ├── <video_name>_qrcode.yuv
-│   │   └── frame<frame_number>.png
-├── qrcode/
-│   ├── <video_name>/
-│   │   ├── qrcode_<number>.png
-│   │   └── qrcode_output.yuv
-├── rec/
-│   ├── <video_name>/
-│   │   ├── recon.yuv
-│   │   ├── recv.log
-│   │   ├── send.log
-│   │   └── raw_frames/
-│   │       └── frames<frame_number>.png
-├── res/
-│   ├── <video_name>/
-│   │   ├── ssim/
-│   │   │   ├── ssim.log
-│   │   │   └── tmp/
-│   │   │       └── <frame_number>.log
-│   │   ├── psnr/
-│   │   │   ├── psnr.log
-│   │   │   └── tmp/
-│   │   │       └── <frame_number>.log
-│   │   ├── x264/
-│   │   │   ├── naive/
-│   │   │   │   └── <loss_rate>_<method_val>.log
-│   │   │   └── deadline_aware/
-│   │   │       └── <loss_rate>_<method_val>.log
-│   │   └── delay.log
-├── fig/
-│   ├── <video_name>/
-│   │   ├── delay.png
-│   │   ├── ssim.png
-│   │   └── psnr.png
-└── file/
-    ├── loss_trace
-    └── warning.log
+project_root/my_experiment/
+├── data
+│   ├── <video_name>.yuv
+│   └── <video_name>_qrcode.yuv
+├── file
+|   ├── loss_trace
+│   └── trace_logs
+│       └── <bandwidth_trace>.log
+├── qrcode
+│   └── <video_name>
+│       └── qrcode_<number>.png
+├── result
+│   └── <bandwidth_trace>
+│       └── output_1
+│           ├── fig
+│           │   └── <video_name>
+│           │       ├── delay.png
+│           │       └── ...
+│           ├── rec
+│           │   └── <video_name>
+│           │       ├── end_stamp.log
+│           │       ├── rate_timestamp.log
+│           │       ├── raw_frames
+│           │       │   └── frame<frame_number>.png
+│           │       ├── recon.yuv
+│           │       ├── recv.log
+│           │       ├── send.log
+│           │       └── start_stamp.log
+│           └── res
+│               └── <video_name>
+│                   ├── delay.log
+│                   ├── frame_size.log
+│                   ├── psnr
+│                   │   └── psnr.log
+│                   ├── rate.log
+│                   └── ssim
+│                       └── ssim.log
+└── send
+    └── <video_name>
+        └── frame<frame_number>.png
 ```
 
 #### **Output Formats**
@@ -408,31 +376,12 @@ project_root/
 
 2. **Delay Log (**`delay.log`):
 
-   •	Directory: `res/<video_name>/ssim/`
+   •	Directory: `res/<video_name>/`
 
 ​	•	Format: delay_value
 
 ​	•	Description: Contains delay values for each frame.
 
-3. **Experiment Log **(`<loss_rate>_<method_val>.log`):
-
-   •	Directory: `res/<video_name>/x264/naive/`
-
-​	•	Format: ssim, delay, burst_frame_idx, frame_translation
-
-​	•	Description: Contains summarized results for each experiment configuration.
-
-**Plots**
-
-Directory: `fig/<video_name>/`
-
-1. **Dot Plot (**`delay.png`):
-
-​	•	Description: Plot showing delay vs frame_index.
-
-2. **Error Plot** (`ssim.png`):
-
-​	•	Description: Plot showing SSIM vs frame_index.
 
 ## *Appendix: **Detailed Description***
 
