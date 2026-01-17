@@ -4,7 +4,7 @@ height=1080
 
 # Need to customize ip and port
 # IMPORTANT: Change server_ip to your machine's public IP address
-ip="YOUR IP ADDRESS"
+ip="143.89.79.104"
 port="8888"
 
 # Modify this if you want to disable MAE
