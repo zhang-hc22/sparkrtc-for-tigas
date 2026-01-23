@@ -520,7 +520,7 @@ void H264EncoderImpl::SetRates(const RateControlParameters& parameters) {
       param_.i_fps_num = static_cast<int>(parameters.framerate_fps);
 
       if (rtc::GetEnableMAE() && parameters.is_overused_for_encoder > 1.0) {
-        double vbv_ratio = std::ceil(1 / param_.i_fps_num * 100) / 100;
+        double vbv_ratio = std::ceil((1 / (double)param_.i_fps_num) * 100) / 100;
         param_.rc.i_vbv_buffer_size = bitrate_kbps * vbv_ratio;
         RTC_LOG(LS_INFO) << "H264EncoderImpl::SetRates() MAE adjusted vbv_ratio "
                    << vbv_ratio << " new vbv_buffer_size " << param_.rc.i_vbv_buffer_size;
