@@ -89,6 +89,8 @@ double GetNextMovingAverage(double prev_average, double cur, double ratio);
 
 bool GetEnableMAE();
 void SetEnableMAE(bool enable);
+bool GetEnableAdaptiveFrameDrop();
+void SetEnableAdaptiveFrameDrop(bool enable);
 bool GetDisableFrameDrop();
 void SetDisableFrameDrop(bool disable);
 

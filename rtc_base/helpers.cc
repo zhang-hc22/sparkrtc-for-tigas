@@ -95,6 +95,7 @@ RandomGenerator& Rng() {
 }  // namespace
 
 static bool g_enable_mae = true;
+static bool g_enable_adaptive_frame_drop = false;
 static bool g_disable_frame_drop = true;
 
 bool GetEnableMAE() {
@@ -103,6 +104,14 @@ bool GetEnableMAE() {
 
 void SetEnableMAE(bool enable_mae) {
   g_enable_mae = enable_mae;
+}
+
+bool GetEnableAdaptiveFrameDrop() {
+  return g_enable_adaptive_frame_drop;
+}
+
+void SetEnableAdaptiveFrameDrop(bool enable_adaptive_frame_drop) {
+  g_enable_adaptive_frame_drop = enable_adaptive_frame_drop;
 }
 
 bool GetDisableFrameDrop() {

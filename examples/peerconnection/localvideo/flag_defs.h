@@ -49,6 +49,11 @@ ABSL_FLAG(bool,gui,kDefaultisGUI,"Graphical User Interface");
 
 ABSL_FLAG(bool,enable_mae,true,"Enable More Adaptive Encoder");
 
+ABSL_FLAG(bool,
+          enable_adaptive_frame_drop,
+          false,
+          "Temporarily re-enable frame dropping under sustained congestion or encoder overuse.");
+
 ABSL_FLAG(bool,disable_frame_drop,true,"Disable Frame Drop");
 
 ABSL_FLAG(int,

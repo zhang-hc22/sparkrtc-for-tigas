@@ -470,7 +470,7 @@ rtc_library("webrtc_h264") {
       "codecs/h264/x264_encoder_impl.cc",
       "codecs/h264/x264_encoder_impl.h",
     ]
-    libs = ["/usr/lib/x86_64-linux-gnu/libx264.a"]
+      libs = ["/mnt/sdcard/sparkrtc_build/x264-install/lib/libx264.a"]
   }
   else {
     sources += [

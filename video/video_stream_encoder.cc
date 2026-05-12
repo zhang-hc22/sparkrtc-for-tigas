@@ -84,6 +84,18 @@ constexpr int kMaxAnimationPixels = 1280 * 720;
 
 constexpr int kDefaultMinScreenSharebps = 1200000;
 
+constexpr double kAdaptiveFrameDropCwndThreshold = 0.05;
+constexpr double kAdaptiveFrameDropOveruseThreshold = 1.0;
+constexpr int64_t kAdaptiveFrameDropRttMs = 150;
+
+bool ShouldTemporarilyEnableFrameDrop(double cwnd_reduce_ratio,
+             int64_t current_rtt_ms,
+             double is_overused_for_encoder) {
+  return cwnd_reduce_ratio > kAdaptiveFrameDropCwndThreshold ||
+    current_rtt_ms >= kAdaptiveFrameDropRttMs ||
+    is_overused_for_encoder > kAdaptiveFrameDropOveruseThreshold;
+}
+
 int GetNumSpatialLayers(const VideoCodec& codec) {
   if (codec.codecType == kVideoCodecVP9) {
     return codec.VP9().numberOfSpatialLayers;
@@ -692,6 +704,7 @@ VideoStreamEncoder::VideoStreamEncoder(
       expect_resize_state_(ExpectResizeState::kNoResize),
       fec_controller_override_(nullptr),
       force_disable_frame_dropper_(false),
+      adaptive_frame_drop_active_(false),
       pending_frame_drops_(0),
       cwnd_frame_counter_(0),
       next_frame_types_(1, VideoFrameType::kVideoFrameDelta),
@@ -1367,7 +1380,7 @@ void VideoStreamEncoder::ReconfigureEncoder() {
   //  * "WebRTC-FrameDropper" field trial is "Disabled".
 
   // Disable frame drop
-  force_disable_frame_dropper_ = rtc::GetDisableFrameDrop() ||
+    force_disable_frame_dropper_ =
       field_trials_.IsDisabled(kFrameDropperFieldTrial) ||
       (num_layers > 1 && codec.mode == VideoCodecMode::kScreensharing);
 
@@ -1608,7 +1621,7 @@ bool VideoStreamEncoder::EncoderPaused() const {
   // pacer queue has grown too large in buffered mode.
   // If the pacer queue has grown too large or the network is down,
   // `last_encoder_rate_settings_->encoder_target` will be 0.
-  if (rtc::GetDisableFrameDrop()) {
+  if (rtc::GetDisableFrameDrop() && !adaptive_frame_drop_active_) {
     // Disable frame drop
     return false;
   }
@@ -1881,6 +1894,7 @@ void VideoStreamEncoder::MaybeEncodeVideoFrame(const VideoFrame& video_frame,
   // rate controller is not trusted.
   const bool frame_dropping_enabled =
       !force_disable_frame_dropper_ &&
+      (!rtc::GetDisableFrameDrop() || adaptive_frame_drop_active_) &&
       !encoder_info_.has_trusted_rate_controller;
   frame_dropper_.Enable(frame_dropping_enabled);
   if (frame_dropping_enabled && frame_dropper_.DropFrame()) {
@@ -2262,7 +2276,7 @@ DataRate VideoStreamEncoder::UpdateTargetBitrate(DataRate target_bitrate,
   RTC_DCHECK_RUN_ON(&encoder_queue_);
   DataRate updated_target_bitrate = target_bitrate;
   // Disable frame drop
-  if (rtc::GetDisableFrameDrop()) {
+  if (rtc::GetDisableFrameDrop() && !adaptive_frame_drop_active_) {
     cwnd_reduce_ratio = 0;
   }
 
@@ -2300,15 +2314,29 @@ void VideoStreamEncoder::OnBitrateUpdated(DataRate target_bitrate,
     encoder_queue_.PostTask([this, target_bitrate, stable_target_bitrate,
                              link_allocation, fraction_lost, round_trip_time_ms,
                              cwnd_reduce_ratio, is_overused_for_encoder] {
-      DataRate updated_target_bitrate =
-          UpdateTargetBitrate(target_bitrate, cwnd_reduce_ratio);
-      OnBitrateUpdated(updated_target_bitrate, stable_target_bitrate,
+      OnBitrateUpdated(target_bitrate, stable_target_bitrate,
                        link_allocation, fraction_lost, round_trip_time_ms,
                        cwnd_reduce_ratio, is_overused_for_encoder);
     });
     return;
   }
   RTC_DCHECK_RUN_ON(&encoder_queue_);
+
+  const bool adaptive_frame_drop_active =
+      rtc::GetEnableAdaptiveFrameDrop() && rtc::GetDisableFrameDrop() &&
+      ShouldTemporarilyEnableFrameDrop(cwnd_reduce_ratio, round_trip_time_ms,
+                                       is_overused_for_encoder);
+  if (adaptive_frame_drop_active_ != adaptive_frame_drop_active) {
+    adaptive_frame_drop_active_ = adaptive_frame_drop_active;
+    RTC_LOG(LS_INFO) << "Adaptive frame drop override "
+                     << (adaptive_frame_drop_active_ ? "enabled" : "disabled")
+                     << ", cwnd_reduce_ratio " << cwnd_reduce_ratio
+                     << ", rtt " << round_trip_time_ms
+                     << ", is_overused_for_encoder "
+                     << is_overused_for_encoder;
+  }
+
+  target_bitrate = UpdateTargetBitrate(target_bitrate, cwnd_reduce_ratio);
 
   const bool video_is_suspended = target_bitrate == DataRate::Zero();
   const bool video_suspension_changed = video_is_suspended != EncoderPaused();
@@ -2375,7 +2403,7 @@ void VideoStreamEncoder::OnBitrateUpdated(DataRate target_bitrate,
 
 bool VideoStreamEncoder::DropDueToSize(uint32_t source_pixel_count) const {
   // Disable frame drop
-  if (rtc::GetDisableFrameDrop()) {
+  if (rtc::GetDisableFrameDrop() && !adaptive_frame_drop_active_) {
     return false;
   }
   if (!encoder_ || !stream_resource_manager_.DropInitialFrames() ||
