@@ -4,18 +4,62 @@ import cv2
 import argparse
 import matplotlib.pyplot as plt
 import numpy as np
+import re
 import subprocess
 import signal
 import sys
 import time
 import psutil
 import json
+import shlex
+import platform
 
 from concurrent.futures import ThreadPoolExecutor
 from math import log10, sqrt
 
-ffmpeg_path = "ffmpeg"
+ffmpeg_path = "ffmpeg -nostdin"
 fps = 30
+
+
+def ffmpeg_supports_libvmaf():
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-filters"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return "libvmaf" in result.stdout
+
+
+def resolve_example_binary(root_dir, binary_name):
+    candidates = [
+        os.path.join(root_dir, "out/JetsonLocalvideo", binary_name),
+        os.path.join(root_dir, "out/Default", binary_name),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    sys.exit(f"Error: unable to find {binary_name} in supported output directories")
+
+
+def trim_incomplete_i420_tail(video_path, width, height):
+    frame_size = width * height * 3 // 2
+    file_size = os.path.getsize(video_path)
+    remainder = file_size % frame_size
+    if remainder == 0:
+        return file_size // frame_size
+
+    trimmed_size = file_size - remainder
+    print(
+        f"Warning: trimming {remainder} trailing bytes from {video_path} "
+        f"to keep whole I420 frames"
+    )
+    with open(video_path, 'r+b') as video_file:
+        video_file.truncate(trimmed_size)
+    return trimmed_size // frame_size
 
 ## Generate qrcode and overlay to video
 def gen_qrcode_pic(num, data_dir):
@@ -139,14 +183,42 @@ def read_data_from_file(file, count, data_lists, seperator, strict_mode = True):
             for i in range(count):
                 data_lists[i].append(line[i])
 
+
+def extract_timestamp_pairs(log_file, marker):
+    pattern = re.compile(rf'{re.escape(marker)}:(\d+):(\d+)')
+    frame_indices = []
+    timestamps = []
+    with open(log_file, 'r') as f:
+        for line in f:
+            match = pattern.search(line)
+            if match:
+                frame_indices.append(int(match.group(1)))
+                timestamps.append(int(match.group(2)))
+    return frame_indices, timestamps
+
+
+def extract_numeric_pairs(log_file, pattern):
+    compiled = re.compile(pattern)
+    first = []
+    second = []
+    with open(log_file, 'r') as f:
+        for line in f:
+            match = compiled.search(line)
+            if match:
+                first.append(int(match.group(1)))
+                second.append(int(match.group(2)))
+    return first, second
+
 def match_rate_with_frame_index(rate_file, frame_index_file, output_file):
     rate_time = []
     rate = []
     with open(rate_file, "r") as f:
         for lines in f.readlines():
-            line = lines.split(",")
-            rate_time.append(line[0])
-            rate.append(line[1])
+            line = lines.strip().replace(',', ' ').split()
+            if len(line) < 2:
+                continue
+            rate_time.append(int(line[0]))
+            rate.append(int(line[1]))
 
     rate_current_index = 0
 
@@ -154,19 +226,24 @@ def match_rate_with_frame_index(rate_file, frame_index_file, output_file):
 
     with open(frame_index_file, "r") as f:
         for lines in f.readlines():
-            line = lines.split(",")
+            line = lines.strip().split(",")
+            if len(line) < 3:
+                continue
             frame_index = line[0]
             time = int(line[2])
 
             if rate_current_index >= len(rate_time):
-                f_output.write(str(frame_index) + ',' + str(rate[len(rate) - 1]) + '\n')
+                f_output.write(str(frame_index) + ',' + str(time) + ',' + str(rate[len(rate) - 1]) + '\n')
+                continue
 
             for i in range(rate_current_index, len(rate_time) - 1):
-                if time < int(rate_time[i + 1]):
+                if time < rate_time[i + 1]:
                     rate_current_index = i
                     # print(i, frame_index, time, rate[i], rate_time[i + 1])
                     f_output.write(str(frame_index) + ',' + str(time) + ',' + str(rate[i]) + '\n')
                     break
+            else:
+                f_output.write(str(frame_index) + ',' + str(time) + ',' + str(rate[len(rate) - 1]) + '\n')
 
     f_output.close()
 
@@ -178,19 +255,19 @@ def extract_rate_and_framesize(recv_dir):
     os.system("rm -rf " + rate_stamp_file)
     os.system("rm -rf " + frame_size_stamp_file)
 
-    extract_rate_command = "grep \"Send Statistics SetRates\" " + send_log_file + " | awk \'{print $13, $8}\' > " + rate_stamp_file
-    extract_frame_size_command = "grep \"Send Statistics Send Frame Size\" " + send_log_file + " | awk \'{print $10, $7}\' > " + frame_size_stamp_file
+    rate_time, rate = extract_numeric_pairs(
+        send_log_file,
+        r'Send Statistics SetRates, stream \d+ target_bitrate (\d+).* current time: (\d+)')
+    frame_size, frame_size_time = extract_numeric_pairs(
+        send_log_file,
+        r'Send Statistics Send Frame Size: (\d+) current time: (\d+)')
 
-    os.system(extract_rate_command)
-    os.system(extract_frame_size_command)
-
-    rate_time = []
-    rate = []
-    read_data_from_file(rate_stamp_file, 2, [rate_time, rate], ' ')
-
-    frame_size_time = []
-    frame_size = []
-    read_data_from_file(frame_size_stamp_file, 2, [frame_size_time, frame_size], ' ')
+    with open(rate_stamp_file, 'w') as f:
+        for timestamp, bitrate in zip(rate_time, rate):
+            f.write(f"{timestamp} {bitrate}\n")
+    with open(frame_size_stamp_file, 'w') as f:
+        for timestamp, size in zip(frame_size_time, frame_size):
+            f.write(f"{timestamp} {size}\n")
 
     return rate_time, rate, frame_size_time, frame_size
 
@@ -252,13 +329,23 @@ def calc_delay_framesize_rate(recv_dir, res_dir):
     os.system("rm -f " + rate_file)
     os.system("rm -f " + rate_with_frame_index_file)
 
-    end_stamp_command = "grep \"Time Stamp\" " + recv_file + " | awk \'{print $4}\' > " + end_time_stamp_file
-    start_stamp_command = "grep \"Time Stamp\" " + send_file + " | awk \'{print $4}\' > " + start_time_stamp_file
-    os.system(start_stamp_command)
-    os.system(end_stamp_command)
+    start_frame_idx, time_stamp_start = extract_timestamp_pairs(send_file,
+                                                                'Time Stamp Start')
+    end_frame_idx, time_stamp_end = extract_timestamp_pairs(recv_file,
+                                                            'Time Stamp End')
 
-    read_data_from_file(start_time_stamp_file, 3, [[], start_frame_idx, time_stamp_start], ":")
-    read_data_from_file(end_time_stamp_file, 3, [[], end_frame_idx, time_stamp_end], ":")
+    with open(start_time_stamp_file, 'w') as f:
+        for frame_index, timestamp in zip(start_frame_idx, time_stamp_start):
+            f.write(f"Time Stamp Start:{frame_index}:{timestamp}\n")
+    with open(end_time_stamp_file, 'w') as f:
+        for frame_index, timestamp in zip(end_frame_idx, time_stamp_end):
+            f.write(f"Time Stamp End:{frame_index}:{timestamp}\n")
+
+    rate_time, rate, frame_size_time, frame_size = extract_rate_and_framesize(recv_dir)
+
+    if not rate_time or not frame_size_time or not time_stamp_end or not time_stamp_start:
+        raise RuntimeError(
+            'Missing expected timestamp or send-statistics log lines in send.log/recv.log')
 
     idx = 0
     for i in range(len(time_stamp_end)):
@@ -269,7 +356,6 @@ def calc_delay_framesize_rate(recv_dir, res_dir):
                 frame_delay.append(time_delay)
                 break
 
-    rate_time, rate, frame_size_time, frame_size = extract_rate_and_framesize(recv_dir)
     # frame size byte to kbps
     frame_size_bitrate = [(x * 8 * fps / 1000) for x in frame_size]
     start_time = min(rate_time[0], frame_size_time[0], time_stamp_end[0])
@@ -289,7 +375,7 @@ def calc_delay_framesize_rate(recv_dir, res_dir):
 def calculate_send2receive_index(res_dir, send_frames_dir, receive_correspoding_send_index):
     send2receive_index_file = res_dir + '/send2receive_index.log'
 
-    os.system("rm " + send2receive_index_file)
+    os.system("rm -f " + send2receive_index_file)
 
     send2receive_index_list = []
 
@@ -366,8 +452,18 @@ def sync_frames(original_raw_frames_dir, rec_dir, res_dir, width, height):
     os.system(f'ffmpeg -s {width}x{height} -i {updated_send_file_prefix}.yuv -c:v libx264 -preset superfast -qp 0 -y {updated_send_file_prefix}.mp4')
 
 def calculate_vmaf_score(rec_dir, send_filename, rec_filename):
+    if ffmpeg_supports_libvmaf():
+        vmaf_json_file = os.path.join(rec_dir, 'updated_recon_vmaf.json')
+        vmaf_command = (
+            f'{ffmpeg_path} -i {rec_dir}{send_filename}.mp4 '
+            f'-i {rec_dir}{rec_filename}.mp4 '
+            f'-lavfi "libvmaf=log_fmt=json:log_path={vmaf_json_file}" '
+            f'-f null -'
+        )
+        return os.system(vmaf_command)
+
     vmaf_command = f'docker run --rm -v {rec_dir}:/socket gfdavila/easyvmaf -r /socket/{send_filename}.mp4 -d /socket/{rec_filename}.mp4'
-    os.system(vmaf_command)
+    return os.system(vmaf_command)
 
 def generate_head_result(data, ratio):
     data.sort()
@@ -378,6 +474,9 @@ def generate_head_result(data, ratio):
 
 def read_json_file(rec_dir, vmaf_score_file):
     vmaf_score_json_file = f'{rec_dir}updated_recon_vmaf.json'
+    if not os.path.exists(vmaf_score_json_file):
+        return np.array([])
+
     f_vmaf_score = open(vmaf_score_file, 'w')
     vmaf_scores = []
 
@@ -397,16 +496,23 @@ def generate_vmaf_result(original_raw_frames_dir, rec_dir, res_dir, width, heigh
         os.remove(vmaf_score_file)
 
     sync_frames(original_raw_frames_dir, rec_dir, res_dir, width, height)
-    calculate_vmaf_score(rec_dir, 'updated_send', 'updated_recon')
+    vmaf_exit_code = calculate_vmaf_score(rec_dir, 'updated_send', 'updated_recon')
 
-    vmaf_scores = read_json_file(rec_dir, vmaf_score_file)
+    vmaf_scores = np.array([])
+    if vmaf_exit_code == 0:
+        vmaf_scores = read_json_file(rec_dir, vmaf_score_file)
+    else:
+        if platform.machine().lower() in ('aarch64', 'arm64') and not ffmpeg_supports_libvmaf():
+            print('Warning: VMAF step skipped because easyvmaf is amd64-only and local ffmpeg has no libvmaf support on this arm64 host.')
+        else:
+            print('Warning: VMAF step skipped because Docker/native VMAF execution failed.')
 
     updated_send_file_prefix = f'{rec_dir}updated_send'
     updated_rec_file_prefix = f'{rec_dir}updated_recon'
-    os.system(f'rm {updated_send_file_prefix}.mp4')
-    os.system(f'rm {updated_rec_file_prefix}.mp4')
-    os.system(f'rm {updated_send_file_prefix}.yuv')
-    os.system(f'rm {updated_rec_file_prefix}.yuv')
+    os.system(f'rm -f {updated_send_file_prefix}.mp4')
+    os.system(f'rm -f {updated_rec_file_prefix}.mp4')
+    os.system(f'rm -f {updated_send_file_prefix}.yuv')
+    os.system(f'rm -f {updated_rec_file_prefix}.yuv')
 
     return vmaf_scores
 
@@ -425,6 +531,7 @@ def decode_recv_video(cfg):
     receive_correspoding_file = res_dir + "receive_correspoding_index.log"
 
     if re_extract_images:
+        trim_incomplete_i420_tail(recv_video_path, cfg.width, cfg.height)
         os.system("rm -rf " + recv_raw_frames_dir)
         os.system("mkdir -p " + recv_raw_frames_dir)
         # Extract all frames from recevied yuv file
@@ -435,6 +542,12 @@ def decode_recv_video(cfg):
 
     delay, overall_delay = calc_delay_framesize_rate(recv_dir, res_dir)
     drop_frames_index, receive_correspoding_send_index = scan_qrcode_fast(recv_raw_frames_dir, received_frame_cnt)
+    send_frame_cnt = len(os.listdir(send_raw_frames_dir)) if os.path.exists(send_raw_frames_dir) else 0
+    if not receive_correspoding_send_index:
+        open(receive_correspoding_file, 'w').close()
+        open(res_dir + 'send2receive_index.log', 'w').close()
+        os.system("rm -rf " + recv_raw_frames_dir)
+        return delay, list(range(1, send_frame_cnt + 1)), np.array([]), overall_delay
     print(f"Drop frames index: {drop_frames_index}")
     print(len(drop_frames_index))
 
@@ -445,7 +558,10 @@ def decode_recv_video(cfg):
 
     calculate_send2receive_index(res_dir, send_raw_frames_dir, receive_correspoding_send_index)
 
-    vmaf_scores = generate_vmaf_result(send_raw_frames_dir, recv_dir, res_dir, cfg.width, cfg.height)
+    if getattr(cfg, 'skip_vmaf', 0):
+        vmaf_scores = np.array([])
+    else:
+        vmaf_scores = generate_vmaf_result(send_raw_frames_dir, recv_dir, res_dir, cfg.width, cfg.height)
 
     os.system("rm -rf " + recv_raw_frames_dir)
 
@@ -459,10 +575,44 @@ def start_process(cmd, error_log_file=None):
     else:
         return subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, preexec_fn=os.setsid)
 
-def kill_process(process):
-    process.terminate() 
-    process.wait()
-    os.killpg(process.pid,signal.SIGKILL)
+def wrap_command(wrapper, command):
+    wrapper = (wrapper or "").strip()
+    if not wrapper:
+        return command
+    return f"{wrapper} {command}"
+
+def bool_flag(value):
+    return 'true' if int(value) else 'false'
+
+def stop_process_group(process, initial_signal=signal.SIGINT, wait_seconds=5.0):
+    if process is None:
+        return
+    if process.poll() is not None:
+        return
+
+    try:
+        os.killpg(process.pid, initial_signal)
+        process.wait(timeout=wait_seconds)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except ProcessLookupError:
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=2.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except ProcessLookupError:
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=2.0)
+    except (subprocess.TimeoutExpired, ProcessLookupError):
+        return
 
 def generate_tail_result(data, ratio):
     data.sort()
@@ -471,11 +621,152 @@ def generate_tail_result(data, ratio):
     mean_tail_data = np.mean(tail_data)
     return mean_tail_data
 
+def compute_longest_drop_burst(drop_frames_index):
+    if not drop_frames_index:
+        return 0
+
+    longest = 1
+    current = 1
+    for idx in range(1, len(drop_frames_index)):
+        if drop_frames_index[idx] == drop_frames_index[idx - 1] + 1:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 1
+    return longest
+
+def load_numeric_column(file_path, column_index):
+    values = []
+    if not os.path.exists(file_path):
+        return values
+
+    with open(file_path, 'r') as input_file:
+        for line in input_file:
+            parts = line.strip().split(',')
+            if len(parts) <= column_index or not parts[column_index]:
+                continue
+            try:
+                values.append(float(parts[column_index]))
+            except ValueError:
+                continue
+    return values
+
+def count_log_occurrences(file_path, needle):
+    if not os.path.exists(file_path):
+        return 0
+
+    count = 0
+    with open(file_path, 'r') as input_file:
+        for line in input_file:
+            if needle in line:
+                count += 1
+    return count
+
+def compute_adaptive_activity_stats(file_path):
+    stats = {
+        'enable_count': 0,
+        'disable_count': 0,
+        'total_bitrate_updates': 0,
+        'active_bitrate_updates': 0,
+        'total_send_frames': 0,
+        'active_send_frames': 0,
+    }
+    if not os.path.exists(file_path):
+        return stats
+
+    adaptive_active = False
+    with open(file_path, 'r') as input_file:
+        for line in input_file:
+            if 'Adaptive frame drop override enabled' in line:
+                adaptive_active = True
+                stats['enable_count'] += 1
+                continue
+            if 'Adaptive frame drop override disabled' in line:
+                adaptive_active = False
+                stats['disable_count'] += 1
+                continue
+            if 'OnBitrateUpdated' in line:
+                stats['total_bitrate_updates'] += 1
+                if adaptive_active:
+                    stats['active_bitrate_updates'] += 1
+            if 'Time Stamp Start:' in line:
+                stats['total_send_frames'] += 1
+                if adaptive_active:
+                    stats['active_send_frames'] += 1
+
+    return stats
+
+def write_summary_file(cfg, delay, drop_frames_index, vmaf_scores, overall_delay):
+    root_dir = os.path.dirname(os.getcwd()) + "/"
+    res_dir = f"{root_dir}result/{cfg.data}/res/"
+    recv_dir = f"{root_dir}result/{cfg.data}/rec/"
+    send_frames_dir = f"{root_dir}send/{cfg.data}/"
+    summary_path = os.path.join(res_dir, 'summary.txt')
+
+    delay = np.array(delay)
+    overall_delay = np.array(overall_delay)
+    vmaf_scores = np.array(vmaf_scores)
+    rate_values = load_numeric_column(os.path.join(res_dir, 'rate.log'), 1)
+    frame_size_values = load_numeric_column(os.path.join(res_dir, 'frame_size.log'), 3)
+    send_log_path = os.path.join(recv_dir, 'send.log')
+    send_frame_count = len(os.listdir(send_frames_dir)) if os.path.exists(send_frames_dir) else 0
+    drop_ratio = (len(drop_frames_index) / send_frame_count) if send_frame_count else 0.0
+    adaptive_activity_stats = compute_adaptive_activity_stats(send_log_path)
+    adaptive_frame_drop_enable_count = adaptive_activity_stats['enable_count']
+    adaptive_frame_drop_disable_count = adaptive_activity_stats['disable_count']
+    active_bitrate_update_ratio = (
+        adaptive_activity_stats['active_bitrate_updates'] /
+        adaptive_activity_stats['total_bitrate_updates']
+        if adaptive_activity_stats['total_bitrate_updates'] else 0.0)
+    active_send_frame_ratio = (
+        adaptive_activity_stats['active_send_frames'] /
+        adaptive_activity_stats['total_send_frames']
+        if adaptive_activity_stats['total_send_frames'] else 0.0)
+
+    with open(summary_path, 'w') as summary_file:
+        summary_file.write(f"video_name={cfg.data}\n")
+        summary_file.write(f"width={cfg.width}\n")
+        summary_file.write(f"height={cfg.height}\n")
+        summary_file.write(f"server_ip={getattr(cfg, 'server_ip', '') or ''}\n")
+        summary_file.write(f"server_port={getattr(cfg, 'server_port', '') or ''}\n")
+        summary_file.write(f"enable_mae={getattr(cfg, 'enable_mae', '')}\n")
+        summary_file.write(f"enable_adaptive_frame_drop={getattr(cfg, 'enable_adaptive_frame_drop', '')}\n")
+        summary_file.write(f"adaptive_frame_drop_enable_count={adaptive_frame_drop_enable_count}\n")
+        summary_file.write(f"adaptive_frame_drop_disable_count={adaptive_frame_drop_disable_count}\n")
+        summary_file.write(f"adaptive_frame_drop_total_bitrate_updates={adaptive_activity_stats['total_bitrate_updates']}\n")
+        summary_file.write(f"adaptive_frame_drop_active_bitrate_updates={adaptive_activity_stats['active_bitrate_updates']}\n")
+        summary_file.write(f"adaptive_frame_drop_active_bitrate_update_ratio={active_bitrate_update_ratio:.6f}\n")
+        summary_file.write(f"adaptive_frame_drop_total_send_frames={adaptive_activity_stats['total_send_frames']}\n")
+        summary_file.write(f"adaptive_frame_drop_active_send_frames={adaptive_activity_stats['active_send_frames']}\n")
+        summary_file.write(f"adaptive_frame_drop_active_send_frame_ratio={active_send_frame_ratio:.6f}\n")
+        summary_file.write(f"disable_frame_drop={getattr(cfg, 'disable_frame_drop', '')}\n")
+        summary_file.write(f"sender_wrapper={getattr(cfg, 'sender_wrapper', '') or ''}\n")
+        summary_file.write(f"receiver_wrapper={getattr(cfg, 'receiver_wrapper', '') or ''}\n")
+        summary_file.write(f"send_frame_count={send_frame_count}\n")
+        summary_file.write(f"drop_frames_count={len(drop_frames_index)}\n")
+        summary_file.write(f"drop_frames_ratio={drop_ratio:.6f}\n")
+        summary_file.write(f"longest_drop_burst={compute_longest_drop_burst(drop_frames_index)}\n")
+        summary_file.write(f"average_delay_ms={np.mean(delay):.6f}\n" if delay.size else "average_delay_ms=nan\n")
+        summary_file.write(f"tail_10_delay_ms={generate_tail_result(delay.tolist(), 0.1):.6f}\n" if delay.size else "tail_10_delay_ms=nan\n")
+        summary_file.write(f"average_overall_delay_ms={np.mean(overall_delay):.6f}\n" if overall_delay.size else "average_overall_delay_ms=nan\n")
+        summary_file.write(f"tail_10_overall_delay_ms={generate_tail_result(overall_delay.tolist(), 0.1):.6f}\n" if overall_delay.size else "tail_10_overall_delay_ms=nan\n")
+        summary_file.write(f"average_bitrate_kbps={np.mean(rate_values):.6f}\n" if rate_values else "average_bitrate_kbps=\n")
+        summary_file.write(f"bitrate_stddev_kbps={np.std(rate_values):.6f}\n" if rate_values else "bitrate_stddev_kbps=\n")
+        summary_file.write(f"average_frame_size_bytes={np.mean(frame_size_values):.6f}\n" if frame_size_values else "average_frame_size_bytes=\n")
+        summary_file.write(f"frame_size_stddev_bytes={np.std(frame_size_values):.6f}\n" if frame_size_values else "frame_size_stddev_bytes=\n")
+        if vmaf_scores.size > 0:
+            summary_file.write(f"average_vmaf={np.mean(vmaf_scores):.6f}\n")
+        else:
+            summary_file.write("average_vmaf=unavailable\n")
+
+    return summary_path
+
 def send_and_recv_video(cfg):
     root_dir = os.path.dirname(os.path.dirname(os.getcwd())) + "/"
 
-    client_bin = root_dir + "out/Default/peerconnection_localvideo"
-    send_bin = root_dir + "out/Default/peerconnection_localvideo"
+    client_bin = resolve_example_binary(root_dir, "peerconnection_localvideo")
+    send_bin = client_bin
+    server_bin = resolve_example_binary(root_dir, "peerconnection_server")
     
     server_ip = cfg.server_ip
     port = cfg.server_port
@@ -484,17 +775,25 @@ def send_and_recv_video(cfg):
     recv_file = f"{recv_dir}recon.yuv"
     send_video_path = f"{root_dir}my_experiment/data/{cfg.data}_qrcode.yuv"
 
-    server_command = f"{root_dir}out/Default/peerconnection_server --port {port} &"
-    send_command = f"{send_bin} --file {send_video_path} --height {cfg.height}\
+    server_command = f"{shlex.quote(server_bin)} --port {port}"
+    send_command = f"{shlex.quote(send_bin)} --file {shlex.quote(send_video_path)} --height {cfg.height}\
                                 --width {cfg.width} --fps {fps}\
                                 --server {server_ip} --port {port}\
-                                --enable_mae {cfg.enable_mae} --disable_frame_drop {cfg.disable_frame_drop}"
-    recv_command = f"{client_bin} --recon {recv_file} --server {server_ip} --port {port}"
+                                --enable_mae={bool_flag(cfg.enable_mae)} \
+                                --enable_adaptive_frame_drop={bool_flag(cfg.enable_adaptive_frame_drop)} \
+                                --disable_frame_drop={bool_flag(cfg.disable_frame_drop)}"
+    recv_command = f"{shlex.quote(client_bin)} --recon {shlex.quote(recv_file)} --server {server_ip} --port {port}"
+
+    server_command = wrap_command(cfg.server_wrapper, server_command)
+    send_command = wrap_command(cfg.sender_wrapper, send_command)
+    recv_command = wrap_command(cfg.receiver_wrapper, recv_command)
 
     os.system("mkdir -p " + recv_dir)
 
-    server_process = start_process(server_command)
-    time.sleep(1)
+    server_process = None
+    if cfg.start_local_server:
+        server_process = start_process(server_command)
+        time.sleep(1)
 
     recv_process = start_process(recv_command, recv_dir + "recv.log")
     time.sleep(1)
@@ -502,8 +801,10 @@ def send_and_recv_video(cfg):
     send_process = start_process(send_command, recv_dir + "send.log")
     send_process.wait()
 
-    kill_process(recv_process)
-    kill_process(server_process)
+    # Allow the receiver to drain the last rendered frame before shutdown.
+    time.sleep(2)
+    stop_process_group(recv_process)
+    stop_process_group(server_process)
 
     delay, drop_frames_index, vmaf_scores, overall_delay = decode_recv_video(cfg)
     delay = np.array(delay)
@@ -511,14 +812,19 @@ def send_and_recv_video(cfg):
     overall_delay = np.array(overall_delay)
 
     avg_delay = np.mean(delay)
-    avg_vmaf = np.mean(vmaf_scores)
     avg_overall_delay = np.mean(overall_delay)
+    summary_path = write_summary_file(cfg, delay.tolist(), drop_frames_index,
+                                      vmaf_scores.tolist(), overall_delay.tolist())
     
     print(f"----------- Current result for {cfg.data} is: ---------------")
     print(f"Average Delay: {avg_delay}, Tail 10% Delay: {generate_tail_result(delay.tolist(), 0.1)}")
     print(f"Average Overall Delay: {avg_overall_delay}, Tail 10% Overall Delay: {generate_tail_result(overall_delay.tolist(), 0.1)}")
-    print("Average VMAF: ", avg_vmaf)
+    if vmaf_scores.size > 0:
+        print("Average VMAF: ", np.mean(vmaf_scores))
+    else:
+        print("Average VMAF: unavailable (Docker/VMAF step did not complete)")
     print("Drop frames count: ", len(drop_frames_index))
+    print("Summary file: ", summary_path)
 
 ## Show figure
 def show_multi_plot_fig(files, x_indexes, y_indexes, labels, x_label, y_label, fig_file, start_index = 0, end_index = 10000):
@@ -604,7 +910,14 @@ def parse_args():
     parser.add_argument("--server_ip", type=str)
     parser.add_argument("--server_port", type=str)
     parser.add_argument("--enable_mae", type=int, default=1)
+    parser.add_argument("--enable_adaptive_frame_drop", type=int, default=0)
     parser.add_argument("--disable_frame_drop", type=int, default=0)
+    parser.add_argument("--sender_wrapper", type=str, default="")
+    parser.add_argument("--receiver_wrapper", type=str, default="")
+    parser.add_argument("--server_wrapper", type=str, default="")
+    parser.add_argument("--start_local_server", type=int, default=1)
+    parser.add_argument("--skip_vmaf", type=int, default=0)
+    parser.add_argument("--skip_figures", type=int, default=0)
 
     return parser.parse_args()
 
@@ -614,6 +927,13 @@ if __name__ == "__main__":
         overlay_qrcode_to_video(cfg)
     elif cfg.option == "send_and_recv":
         send_and_recv_video(cfg)
+    elif cfg.option == "analyze_only":
+        delay, drop_frames_index, vmaf_scores, overall_delay = decode_recv_video(cfg)
+        summary_path = write_summary_file(cfg, delay, drop_frames_index,
+                                          vmaf_scores, overall_delay)
+        print("Summary file: ", summary_path)
+        if not cfg.skip_figures:
+            show_fig(cfg)
     elif cfg.option == "show_fig":
         show_fig(cfg)
     else:

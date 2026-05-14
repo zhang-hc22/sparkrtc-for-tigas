@@ -171,6 +171,7 @@ FakeMainWnd::VideoRenderer::VideoRenderer(
     : width_(0),
       height_(0),
       main_wnd_(main_wnd),
+      file_(nullptr),
       rendered_track_(track_to_render) {
   rendered_track_->AddOrUpdateSink(this, rtc::VideoSinkWants());
 // Open file to write
@@ -180,8 +181,9 @@ FakeMainWnd::VideoRenderer::VideoRenderer(
 }
 
 FakeMainWnd::VideoRenderer::~VideoRenderer() {
-
-  fclose(file_);
+  if (file_ != nullptr) {
+    fclose(file_);
+  }
   rendered_track_->RemoveSink(this);
 }
 

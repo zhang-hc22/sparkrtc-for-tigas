@@ -20,6 +20,7 @@
 #include "examples/peerconnection/localvideo/linux/fake_wnd.h"
 #include "examples/peerconnection/localvideo/peer_connection_localvideo.h"
 #include "rtc_base/physical_socket_server.h"
+#include "rtc_base/logging.h"
 #include "rtc_base/ssl_adapter.h"
 #include "rtc_base/thread.h"
 #include "rtc_base/helpers.h"
@@ -38,6 +39,7 @@ double local_codec_choose;
 bool is_sender = false;
 bool is_GUI = false;
 bool enable_mae = true;
+bool enable_adaptive_frame_drop = false;
 bool disable_frame_drop = true;
 class CustomSocketServer : public rtc::PhysicalSocketServer {
  public:
@@ -115,6 +117,11 @@ class CustomSocketServerNoGUi : public rtc::PhysicalSocketServer {
 int main(int argc, char* argv[]) {
   absl::ParseCommandLine(argc, argv);
 
+  rtc::LogMessage::LogTimestamps(true);
+  rtc::LogMessage::LogThreads(true);
+  rtc::LogMessage::LogToDebug(rtc::LS_INFO);
+  rtc::LogMessage::SetLogToStderr(true);
+
   // InitFieldTrialsFromString stores the char*, so the char array must outlive
   // the application.
   const std::string forced_field_trials =
@@ -137,9 +144,12 @@ int main(int argc, char* argv[]) {
   local_video_fps = absl::GetFlag(FLAGS_fps);
   is_GUI = absl::GetFlag(FLAGS_gui);
   enable_mae = absl::GetFlag(FLAGS_enable_mae);
+  enable_adaptive_frame_drop =
+      absl::GetFlag(FLAGS_enable_adaptive_frame_drop);
   disable_frame_drop = absl::GetFlag(FLAGS_disable_frame_drop);
 
   rtc::SetEnableMAE(enable_mae);
+  rtc::SetEnableAdaptiveFrameDrop(enable_adaptive_frame_drop);
   rtc::SetDisableFrameDrop(disable_frame_drop);
 
   bool autocall = false;

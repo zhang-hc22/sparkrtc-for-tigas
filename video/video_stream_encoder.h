@@ -376,6 +376,9 @@ class VideoStreamEncoder : public VideoStreamEncoderInterface,
   // trusted rate controller. This is determined on a per-frame basis, as the
   // encoder behavior might dynamically change.
   bool force_disable_frame_dropper_ RTC_GUARDED_BY(&encoder_queue_);
+    // SparkRTC can prefer to avoid frame dropping, but under sustained network
+    // pressure or encoder overuse we temporarily re-enable it to limit queueing.
+    bool adaptive_frame_drop_active_ RTC_GUARDED_BY(&encoder_queue_);
   // Incremented on worker thread whenever `frame_dropper_` determines that a
   // frame should be dropped. Decremented on whichever thread runs
   // OnEncodedImage(), which is only called by one thread but not necessarily
