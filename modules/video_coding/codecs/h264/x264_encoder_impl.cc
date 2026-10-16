@@ -34,6 +34,7 @@
 #include "rtc_base/logging.h"
 #include "rtc_base/time_utils.h"
 #include "rtc_base/helpers.h"
+#include "system_wrappers/include/field_trial.h"
 #include "system_wrappers/include/metrics.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
 #include "third_party/libyuv/include/libyuv/scale.h"
@@ -228,10 +229,12 @@ H264EncoderImpl::~H264EncoderImpl() {
 
 int32_t H264EncoderImpl::InitEncode(const VideoCodec* inst,
                                     const VideoEncoder::Settings& settings) {
+  keyframe_fix_ = field_trial::IsEnabled("WebRTC-Tigas-X264KeyFrameFix");
   RTC_LOG(LS_INFO) << "H264EncoderImpl::InitEncode enable_mae "
                    << rtc::GetEnableMAE()
                    << " disable_frame_drop "
-                   << rtc::GetDisableFrameDrop();
+                   << rtc::GetDisableFrameDrop()
+                   << " keyframe_fix " << keyframe_fix_;
   ReportInit();
   if (!inst || inst->codecType != kVideoCodecH264) {
     ReportError();
@@ -615,6 +618,10 @@ int32_t H264EncoderImpl::Encode(
          (*frame_types)[simulcast_idx] == VideoFrameType::kVideoFrameKey);
     if (send_key_frame) {
       pic_.b_keyframe = true;
+      if (keyframe_fix_) {
+        pic_.i_type = X264_TYPE_IDR;
+        configurations_[i].key_frame_request = false;
+      }
       // API doc says ForceIntraFrame(false) does nothing, but calling this
       // function forces a key frame regardless of the `bIDR` argument's value.
       // (If every frame is a key frame we get lag/delays.)
@@ -662,6 +669,8 @@ int32_t H264EncoderImpl::Encode(
 
     // TODO frametype
     encoded_images_[i]._frameType = VideoFrameType::kVideoFrameDelta;
+    if (keyframe_fix_ && pic_out_.b_keyframe)
+      encoded_images_[i]._frameType = VideoFrameType::kVideoFrameKey;
     //  ConvertToVideoFrameType(info.eFrameType);
     encoded_images_[i].SetSimulcastIndex(configurations_[i].simulcast_idx);
 
@@ -685,7 +694,8 @@ int32_t H264EncoderImpl::Encode(
       codec_specific.codecSpecific.H264.packetization_mode =
           packetization_mode_;
       codec_specific.codecSpecific.H264.temporal_idx = kNoTemporalIdx;
-      codec_specific.codecSpecific.H264.idr_frame = send_key_frame;
+      codec_specific.codecSpecific.H264.idr_frame =
+          keyframe_fix_ ? pic_out_.b_keyframe != 0 : send_key_frame;
       codec_specific.codecSpecific.H264.base_layer_sync = false;
       if (configurations_[i].num_temporal_layers > 1) {
         const uint8_t tid = 0;

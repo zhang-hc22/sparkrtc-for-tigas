@@ -2489,7 +2489,7 @@ void VideoStreamEncoder::RunPostEncode(const EncodedImage& encoded_image,
 
   if (!frame_size.IsZero()) {
     frame_dropper_.Fill(frame_size.bytes(), !keyframe);
-    RTC_LOG(LS_INFO) << "Send Statistics Send Frame Size: " << frame_size.bytes() << " current time: " << rtc::TimeMillis();
+    RTC_LOG(LS_INFO) << "Send Statistics Send Frame Size: " << frame_size.bytes() << " current time: " << rtc::TimeMillis() << " rtp_ts: " << encoded_image.RtpTimestamp() << " qp: " << encoded_image.qp_ << " key: " << keyframe;
   }
 
   stream_resource_manager_.OnEncodeCompleted(encoded_image, time_sent_us,

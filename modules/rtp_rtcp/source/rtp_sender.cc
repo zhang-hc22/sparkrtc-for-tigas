@@ -166,6 +166,12 @@ RTPSender::RTPSender(const RtpRtcpInterface::Configuration& config,
       retransmission_rate_limiter_(config.retransmission_rate_limiter) {
   // This random initialization is not intended to be cryptographic strong.
   timestamp_offset_ = random_.Rand<uint32_t>();
+  // TIGAS maps each received frame to its viewpoint by the RTP timestamp, so
+  // it needs the wire timestamp to be 90 * capture NTP ms (mod 2^32).
+  if (config.field_trials &&
+      config.field_trials->IsEnabled("WebRTC-Tigas-ZeroRtpTimestampOffset")) {
+    timestamp_offset_ = 0;
+  }
 
   RTC_DCHECK(paced_sender_);
   RTC_DCHECK(packet_history_);
