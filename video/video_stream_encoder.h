@@ -460,6 +460,10 @@ class VideoStreamEncoder : public VideoStreamEncoderInterface,
   QpParser qp_parser_;
   const bool qp_parsing_allowed_;
 
+  // Field trial WebRTC-Tigas-EncodeEveryFrame: when frames arrive faster than
+  // they are encoded, encode each one in turn instead of only the newest.
+  const bool encode_every_frame_;
+
   // Enables encoder switching on initialization failures.
   bool switch_encoder_on_init_failures_;
 

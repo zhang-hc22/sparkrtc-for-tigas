@@ -58,11 +58,14 @@ ABSL_FLAG(std::string,
           "WebRTC-Bwe-ProbeRateFallback/Enabled/"
           "WebRTC-AddPacingToCongestionWindowPushback/Enabled/"
           "WebRTC-Tigas-ZeroRtpTimestampOffset/Enabled/"
-          "WebRTC-Tigas-X264KeyFrameFix/Enabled/",
+          "WebRTC-Tigas-X264KeyFrameFix/Enabled/"
+          "WebRTC-Tigas-EncodeEveryFrame/Enabled/",
           "Field trials. The first three are the localvideo defaults. "
           "ZeroRtpTimestampOffset makes the wire RTP timestamp 90 * capture "
           "NTP ms; X264KeyFrameFix makes x264 answer key frame requests "
-          "(modules/video_coding/codecs/h264/x264_encoder_impl.h).");
+          "(modules/video_coding/codecs/h264/x264_encoder_impl.h); "
+          "EncodeEveryFrame keeps the encoder queue from dropping frames "
+          "that arrive close together (video/video_stream_encoder.h).");
 
 namespace {
 
