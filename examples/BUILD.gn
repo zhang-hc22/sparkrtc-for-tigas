@@ -1086,6 +1086,7 @@ if (is_linux || is_chromeos || is_win) {
       "../rtc_base:checks",
       "../rtc_base:logging",
       "../rtc_base:net_helpers",
+      "../rtc_base:network",
       "../rtc_base:rtc_json",
       "../rtc_base:ssl",
       "../rtc_base:stringutils",

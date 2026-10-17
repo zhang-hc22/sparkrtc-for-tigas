@@ -24,6 +24,8 @@
 #include "examples/peerconnection/localvideo/peer_connection_localvideo.h"
 #include "examples/tigas/push_video_source.h"
 #include "examples/tigas/render_client.h"
+#include "p2p/base/basic_packet_socket_factory.h"
+#include "rtc_base/network.h"
 #include "rtc_base/thread.h"
 
 namespace tigas {
@@ -105,6 +107,13 @@ class TigasSender : public webrtc::PeerConnectionObserver,
   PeerConnectionClient* const client_;
   const SenderOptions options_;
   rtc::Thread* const main_thread_;
+
+  // Declared before factory_, which keeps a pointer to the network thread.
+  // With a candidate prefix, the port allocator gathers only on the networks
+  // whose address starts with it (PrefixNetworkManager in tigas_sender.cc).
+  std::unique_ptr<rtc::Thread> network_thread_;
+  std::unique_ptr<rtc::BasicNetworkManager> network_manager_;
+  std::unique_ptr<rtc::BasicPacketSocketFactory> socket_factory_;
 
   rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
   rtc::scoped_refptr<webrtc::PeerConnectionInterface> pc_;

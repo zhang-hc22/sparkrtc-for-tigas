@@ -25,6 +25,7 @@
 #include "api/video_codecs/video_encoder_factory_template.h"
 #include "api/video_codecs/video_encoder_factory_template_open_h264_adapter.h"
 #include "modules/audio_device/include/fake_audio_device.h"
+#include "p2p/client/basic_port_allocator.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/strings/json.h"
 #include "rtc_base/time_utils.h"
@@ -49,6 +50,28 @@ std::string ToJsonString(const Json::Value& value) {
   builder["indentation"] = "";
   return Json::writeString(builder, value);
 }
+
+// Lists only the networks whose address starts with the prefix. Dropping the
+// other candidates from the signaling (OnIceCandidate) is not enough: the ICE
+// agent still checks from them, and the page then nominated the pair on the
+// host's public address in the middle of the warm-up, which reset GCC.
+class PrefixNetworkManager : public rtc::BasicNetworkManager {
+ public:
+  PrefixNetworkManager(rtc::SocketFactory* socket_factory, std::string prefix)
+      : rtc::BasicNetworkManager(socket_factory), prefix_(std::move(prefix)) {}
+
+  std::vector<const rtc::Network*> GetNetworks() const override {
+    std::vector<const rtc::Network*> out;
+    for (const rtc::Network* n : rtc::BasicNetworkManager::GetNetworks()) {
+      if (absl::StartsWith(n->GetBestIP().ToString(), prefix_))
+        out.push_back(n);
+    }
+    return out;
+  }
+
+ private:
+  const std::string prefix_;
+};
 
 bool ParseJson(const std::string& text, Json::Value* value) {
   Json::CharReaderBuilder builder;
@@ -134,11 +157,14 @@ bool TigasSender::Start() {
   // No audio track; the fake module keeps the factory away from the sound
   // devices.
   static webrtc::FakeAudioDeviceModule adm;
-  // The network and worker threads are created by the factory. The main
-  // thread is the signaling thread, so the signaling client, the
-  // PeerConnection callbacks and the DataChannel messages all run on it.
+  // The worker thread is created by the factory. The main thread is the
+  // signaling thread, so the signaling client, the PeerConnection callbacks
+  // and the DataChannel messages all run on it.
+  network_thread_ = rtc::Thread::CreateWithSocketServer();
+  network_thread_->SetName("tigas_network", nullptr);
+  network_thread_->Start();
   factory_ = webrtc::CreatePeerConnectionFactory(
-      nullptr /* network_thread */, nullptr /* worker_thread */, main_thread_,
+      network_thread_.get(), nullptr /* worker_thread */, main_thread_,
       rtc::scoped_refptr<webrtc::AudioDeviceModule>(&adm),
       webrtc::CreateBuiltinAudioEncoderFactory(),
       webrtc::CreateBuiltinAudioDecoderFactory(),
@@ -172,6 +198,20 @@ bool TigasSender::CreatePeerConnection() {
       webrtc::PeerConnectionInterface::kRtcpMuxPolicyRequire;
 
   webrtc::PeerConnectionDependencies deps(this);
+  if (!options_.candidate_prefix.empty()) {
+    network_thread_->BlockingCall([this] {
+      network_manager_ = std::make_unique<PrefixNetworkManager>(
+          network_thread_->socketserver(), options_.candidate_prefix);
+      socket_factory_ = std::make_unique<rtc::BasicPacketSocketFactory>(
+          network_thread_->socketserver());
+    });
+    // As PeerConnectionFactory builds the default allocator.
+    deps.allocator = std::make_unique<cricket::BasicPortAllocator>(
+        network_manager_.get(), socket_factory_.get());
+    deps.allocator->SetPortRange(config.port_allocator_config.min_port,
+                                 config.port_allocator_config.max_port);
+    deps.allocator->set_flags(config.port_allocator_config.flags);
+  }
   auto pc_or_error =
       factory_->CreatePeerConnectionOrError(config, std::move(deps));
   if (!pc_or_error.ok()) {
@@ -619,6 +659,12 @@ void TigasSender::Shutdown(const char* reason) {
   }
   source_ = nullptr;
   factory_ = nullptr;
+  if (network_manager_) {
+    network_thread_->BlockingCall([this] {
+      network_manager_.reset();
+      socket_factory_.reset();
+    });
+  }
   client_->SignOut();
   main_thread_->Quit();
 }
