@@ -306,6 +306,14 @@ void AimdRateControl::ChangeBitrate(const RateControlInput& input,
       if (decreased_bitrate < current_bitrate_) {
         new_bitrate = decreased_bitrate;
       }
+      // TIGAS: what each back-off was based on.
+      RTC_LOG(LS_INFO) << "TigasAimdDecrease throughput "
+                       << estimated_throughput.bps() << " current "
+                       << current_bitrate_.bps() << " decreased "
+                       << decreased_bitrate.bps() << " link_capacity "
+                       << (link_capacity_.has_estimate()
+                               ? link_capacity_.estimate().bps()
+                               : -1);
 
       if (bitrate_is_initialized_ && estimated_throughput < current_bitrate_) {
         if (!new_bitrate.has_value()) {
