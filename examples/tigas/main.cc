@@ -59,20 +59,19 @@ ABSL_FLAG(std::string,
           "WebRTC-AddPacingToCongestionWindowPushback/Enabled/"
           "WebRTC-Tigas-ZeroRtpTimestampOffset/Enabled/"
           "WebRTC-Tigas-X264KeyFrameFix/Enabled/"
-          "WebRTC-Tigas-EncodeEveryFrame/Enabled/"
           "WebRTC-Bwe-RobustThroughputEstimatorSettings/"
           "window_packets:20,max_window_packets:500,window_duration:1s,"
           "max_window_duration:5s/",
           "Field trials. The first three are the localvideo defaults. "
           "ZeroRtpTimestampOffset makes the wire RTP timestamp 90 * capture "
           "NTP ms; X264KeyFrameFix makes x264 answer key frame requests "
-          "(modules/video_coding/codecs/h264/x264_encoder_impl.h); "
-          "EncodeEveryFrame keeps the encoder queue from dropping frames "
-          "that arrive close together (video/video_stream_encoder.h). "
+          "(modules/video_coding/codecs/h264/x264_encoder_impl.h). "
           "RobustThroughputEstimatorSettings puts back the upstream window "
           "of the acknowledged bitrate: sparkrtc's 20-packet cap with "
           "pacing factor 100 can make GCC back off to 0.85 * the send rate "
-          "of two frames' bursts (acknowledged_bitrate_estimator_interface.h).");
+          "of two frames' bursts (acknowledged_bitrate_estimator_interface.h). "
+          "Add WebRTC-Tigas-EncodeEveryFrame/Enabled/ to encode every queued "
+          "frame instead of only the newest (video/video_stream_encoder.h).");
 
 namespace {
 
