@@ -109,6 +109,10 @@ class AimdRateControl {
   FieldTrialFlag disable_estimate_bounded_increase_{"Disabled"};
   FieldTrialParameter<bool> use_current_estimate_as_min_upper_bound_{"c_upper",
                                                                      false};
+  // TIGAS: WebRTC-Tigas-AimdIncrease, the scale of the additive increase and
+  // the per-second factor of the multiplicative increase.
+  FieldTrialParameter<double> additive_increase_scale_{"ai", 1.0};
+  FieldTrialParameter<double> multiplicative_increase_factor_{"mi", 1.08};
   absl::optional<DataRate> last_decrease_;
 };
 }  // namespace webrtc

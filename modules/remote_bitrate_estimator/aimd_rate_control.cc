@@ -86,7 +86,12 @@ AimdRateControl::AimdRateControl(const FieldTrialsView& key_value_config,
       {&disable_estimate_bounded_increase_,
        &use_current_estimate_as_min_upper_bound_},
       key_value_config.Lookup("WebRTC-Bwe-EstimateBoundedIncrease"));
+  ParseFieldTrial(
+      {&additive_increase_scale_, &multiplicative_increase_factor_},
+      key_value_config.Lookup("WebRTC-Tigas-AimdIncrease"));
   RTC_LOG(LS_INFO) << "Using aimd rate control with back off factor " << beta_;
+  RTC_LOG(LS_INFO) << "TigasAimdIncrease ai " << additive_increase_scale_.Get()
+                   << " mi " << multiplicative_increase_factor_.Get();
 }
 
 AimdRateControl::~AimdRateControl() {}
@@ -366,7 +371,7 @@ DataRate AimdRateControl::MultiplicativeRateIncrease(
     Timestamp at_time,
     Timestamp last_time,
     DataRate current_bitrate) const {
-  double alpha = 1.08;
+  double alpha = multiplicative_increase_factor_.Get();
   if (last_time.IsFinite()) {
     auto time_since_last_update = at_time - last_time;
     alpha = pow(alpha, std::min(time_since_last_update.seconds<double>(), 1.0));
@@ -379,8 +384,9 @@ DataRate AimdRateControl::MultiplicativeRateIncrease(
 DataRate AimdRateControl::AdditiveRateIncrease(Timestamp at_time,
                                                Timestamp last_time) const {
   double time_period_seconds = (at_time - last_time).seconds<double>();
-  double data_rate_increase_bps =
-      GetNearMaxIncreaseRateBpsPerSecond() * time_period_seconds;
+  double data_rate_increase_bps = additive_increase_scale_.Get() *
+                                  GetNearMaxIncreaseRateBpsPerSecond() *
+                                  time_period_seconds;
   return DataRate::BitsPerSec(data_rate_increase_bps);
 }
 

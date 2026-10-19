@@ -79,6 +79,17 @@ ABSL_FLAG(std::string,
           "of two frames' bursts (acknowledged_bitrate_estimator_interface.h). "
           "Add WebRTC-Tigas-EncodeEveryFrame/Enabled/ to encode every queued "
           "frame instead of only the newest (video/video_stream_encoder.h).");
+ABSL_FLAG(double,
+          gcc_ai,
+          1.0,
+          "Scale of GCC's additive increase "
+          "(modules/remote_bitrate_estimator/aimd_rate_control.cc).");
+ABSL_FLAG(double,
+          gcc_mi,
+          1.08,
+          "Per-second factor of GCC's multiplicative increase. If this or "
+          "--gcc_ai is not the default, WebRTC-Tigas-AimdIncrease/ai:..,mi:../ "
+          "is added to the field trials.");
 
 namespace {
 
@@ -127,8 +138,15 @@ int main(int argc, char* argv[]) {
 
   // InitFieldTrialsFromString keeps the pointer, so the string must outlive
   // the program.
-  static const std::string field_trials =
-      absl::GetFlag(FLAGS_force_fieldtrials);
+  static std::string field_trials = absl::GetFlag(FLAGS_force_fieldtrials);
+  const double gcc_ai = absl::GetFlag(FLAGS_gcc_ai);
+  const double gcc_mi = absl::GetFlag(FLAGS_gcc_mi);
+  if (gcc_ai != 1.0 || gcc_mi != 1.08) {
+    char trial[96];
+    snprintf(trial, sizeof(trial), "WebRTC-Tigas-AimdIncrease/ai:%g,mi:%g/",
+             gcc_ai, gcc_mi);
+    field_trials += trial;
+  }
   webrtc::field_trial::InitFieldTrialsFromString(field_trials.c_str());
 
   rtc::SetEnableMAE(absl::GetFlag(FLAGS_enable_mae));
