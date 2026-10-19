@@ -8,6 +8,8 @@
 #include <inttypes.h>
 #include <string.h>
 
+#include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "absl/strings/match.h"
@@ -481,11 +483,19 @@ void TigasSender::OnMessage(const webrtc::DataBuffer& buffer) {
     return;
   }
   pose.i = json["i"].asInt();
+  if (json.isMember("s"))
+    pose.seq = json["s"].asInt64();
   // The line has no newline in it: the page sends JSON.stringify output.
   {
     std::lock_guard<std::mutex> lock(mu_);
-    pose.queue_ahead = queue_.size();
-    queue_.push_back(std::move(pose));
+    if (options_.push_fps > 0) {
+      latest_ = std::move(pose);
+      has_latest_ = true;
+      since_tick_++;
+    } else {
+      pose.queue_ahead = queue_.size();
+      queue_.push_back(std::move(pose));
+    }
   }
   cv_.notify_one();
 }
@@ -494,6 +504,10 @@ void TigasSender::OnMessage(const webrtc::DataBuffer& buffer) {
 // Render thread: one viewpoint at a time, in arrival order.
 
 void TigasSender::RenderLoop() {
+  if (options_.push_fps > 0) {
+    PushLoop();
+    return;
+  }
   while (true) {
     Pose pose;
     {
@@ -504,62 +518,104 @@ void TigasSender::RenderLoop() {
       pose = std::move(queue_.front());
       queue_.pop_front();
     }
-
-    const double t_render_start = WallMs();
-    RenderReply reply;
-    if (!render_.Render(pose.line, &reply)) {
-      main_thread_->PostTask([this] { Shutdown("render worker failed"); });
+    if (!RenderAndPush(pose, -1))
       return;
-    }
-    const double t_render_end = WallMs();
-    if (!reply.buffer) {
-      RTC_LOG(LS_ERROR) << "The worker could not render viewpoint " << pose.i;
-      fprintf(frames_log_, "{\"i\":%d,\"error\":\"render\",\"t_arrive\":%.3f}\n",
-              pose.i, pose.t_arrive);
-      fflush(frames_log_);
-      continue;
-    }
-    if (reply.i != pose.i)
-      RTC_LOG(LS_WARNING) << "Worker replied for viewpoint " << reply.i
-                          << " instead of " << pose.i;
-
-    // The capture time must increase, or the encoder drops the frame
-    // (video/video_stream_encoder.cc). With the field trial
-    // WebRTC-Tigas-ZeroRtpTimestampOffset the wire RTP timestamp is
-    // 90 * ntp_ms mod 2^32.
-    int64_t ntp_ms = rtc::TimeUTCMillis() + kNtpJan1970Ms;
-    if (ntp_ms <= last_ntp_ms_)
-      ntp_ms = last_ntp_ms_ + 1;
-    last_ntp_ms_ = ntp_ms;
-    const uint32_t rtp_ts = 90u * static_cast<uint32_t>(ntp_ms);
-
-    webrtc::VideoFrame frame = webrtc::VideoFrame::Builder()
-                                   .set_video_frame_buffer(reply.buffer)
-                                   .set_timestamp_us(rtc::TimeMicros())
-                                   .set_ntp_time_ms(ntp_ms)
-                                   .set_rotation(webrtc::kVideoRotation_0)
-                                   .build();
-    const double t_push = WallMs();
-    const double t_push_mono = MonoMs();
-    source_->Push(frame);
-
-    char meta[160];
-    snprintf(meta, sizeof(meta),
-             "{\"i\":%d,\"rtp_ts\":%u,\"render_ms\":%.3f,\"t_push\":%.3f}",
-             pose.i, rtp_ts, reply.render_ms, t_push);
-    const bool meta_sent = dc_->Send(webrtc::DataBuffer(std::string(meta)));
-
-    fprintf(frames_log_,
-            "{\"i\":%d,\"t_arrive\":%.3f,\"t_arrive_mono\":%.3f,"
-            "\"queue_ahead\":%zu,\"t_render_start\":%.3f,"
-            "\"t_render_end\":%.3f,\"render_ms\":%.3f,\"ntp_ms\":%" PRId64
-            ",\"rtp_ts\":%u,\"t_push\":%.3f,\"t_push_mono\":%.3f,"
-            "\"meta_sent\":%s}\n",
-            pose.i, pose.t_arrive, pose.t_arrive_mono, pose.queue_ahead,
-            t_render_start, t_render_end, reply.render_ms, ntp_ms, rtp_ts,
-            t_push, t_push_mono, meta_sent ? "true" : "false");
-    fflush(frames_log_);
   }
+}
+
+// Push mode: tick k renders the latest pose at start + k / push_fps, or as
+// soon as the render of tick k - 1 is done if that is later; late ticks are
+// not made up for. The pose is rendered again even if it has not changed.
+// Ticks start with the first pose.
+void TigasSender::PushLoop() {
+  const double period_ms = 1000.0 / options_.push_fps;
+  double due_ms = 0;
+  for (int64_t tick = 0;; tick++) {
+    Pose pose;
+    {
+      std::unique_lock<std::mutex> lock(mu_);
+      if (tick == 0) {
+        cv_.wait(lock, [this] { return stop_ || has_latest_; });
+        due_ms = MonoMs();
+      } else {
+        due_ms = std::max(due_ms + period_ms, MonoMs());
+        cv_.wait_for(lock,
+                     std::chrono::microseconds(
+                         static_cast<int64_t>((due_ms - MonoMs()) * 1000)),
+                     [this] { return stop_; });
+      }
+      if (stop_)
+        return;
+      pose = latest_;
+      pose.queue_ahead = since_tick_;
+      since_tick_ = 0;
+    }
+    if (!RenderAndPush(pose, tick))
+      return;
+  }
+}
+
+bool TigasSender::RenderAndPush(const Pose& pose, int64_t tick) {
+  const double t_render_start = WallMs();
+  RenderReply reply;
+  if (!render_.Render(pose.line, &reply)) {
+    main_thread_->PostTask([this] { Shutdown("render worker failed"); });
+    return false;
+  }
+  const double t_render_end = WallMs();
+  if (!reply.buffer) {
+    RTC_LOG(LS_ERROR) << "The worker could not render viewpoint " << pose.i;
+    fprintf(frames_log_, "{\"i\":%d,\"error\":\"render\",\"t_arrive\":%.3f}\n",
+            pose.i, pose.t_arrive);
+    fflush(frames_log_);
+    return true;
+  }
+  if (reply.i != pose.i)
+    RTC_LOG(LS_WARNING) << "Worker replied for viewpoint " << reply.i
+                        << " instead of " << pose.i;
+
+  // The capture time must increase, or the encoder drops the frame
+  // (video/video_stream_encoder.cc). With the field trial
+  // WebRTC-Tigas-ZeroRtpTimestampOffset the wire RTP timestamp is
+  // 90 * ntp_ms mod 2^32.
+  int64_t ntp_ms = rtc::TimeUTCMillis() + kNtpJan1970Ms;
+  if (ntp_ms <= last_ntp_ms_)
+    ntp_ms = last_ntp_ms_ + 1;
+  last_ntp_ms_ = ntp_ms;
+  const uint32_t rtp_ts = 90u * static_cast<uint32_t>(ntp_ms);
+
+  webrtc::VideoFrame frame = webrtc::VideoFrame::Builder()
+                                 .set_video_frame_buffer(reply.buffer)
+                                 .set_timestamp_us(rtc::TimeMicros())
+                                 .set_ntp_time_ms(ntp_ms)
+                                 .set_rotation(webrtc::kVideoRotation_0)
+                                 .build();
+  const double t_push = WallMs();
+  const double t_push_mono = MonoMs();
+  source_->Push(frame);
+
+  // Push mode adds the tick and the number of the page's message.
+  char push[64] = "";
+  if (tick >= 0)
+    snprintf(push, sizeof(push), ",\"tick\":%" PRId64 ",\"s\":%" PRId64,
+             tick, pose.seq);
+  char meta[224];
+  snprintf(meta, sizeof(meta),
+           "{\"i\":%d,\"rtp_ts\":%u,\"render_ms\":%.3f,\"t_push\":%.3f%s}",
+           pose.i, rtp_ts, reply.render_ms, t_push, push);
+  const bool meta_sent = dc_->Send(webrtc::DataBuffer(std::string(meta)));
+
+  fprintf(frames_log_,
+          "{\"i\":%d,\"t_arrive\":%.3f,\"t_arrive_mono\":%.3f,"
+          "\"queue_ahead\":%zu,\"t_render_start\":%.3f,"
+          "\"t_render_end\":%.3f,\"render_ms\":%.3f,\"ntp_ms\":%" PRId64
+          ",\"rtp_ts\":%u,\"t_push\":%.3f,\"t_push_mono\":%.3f,"
+          "\"meta_sent\":%s%s}\n",
+          pose.i, pose.t_arrive, pose.t_arrive_mono, pose.queue_ahead,
+          t_render_start, t_render_end, reply.render_ms, ntp_ms, rtp_ts,
+          t_push, t_push_mono, meta_sent ? "true" : "false", push);
+  fflush(frames_log_);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
 /*
  *  TIGAS sender. Signs in to peerconnection_server, waits for the page,
  *  offers one video track and one negotiated DataChannel, and renders every
- *  viewpoint the page sends through tigas/webrtc/render_worker.py.
+ *  viewpoint the page sends through tigas/webrtc/render_worker.py, or with
+ *  --push_fps the latest viewpoint at a fixed rate.
  */
 
 #include <signal.h>
@@ -43,6 +44,12 @@ ABSL_FLAG(std::string,
           "empty sends all.");
 ABSL_FLAG(int, stats_interval_ms, 100, "GetStats period.");
 ABSL_FLAG(int, max_duration_s, 900, "Exit after this long in any case.");
+ABSL_FLAG(int,
+          push_fps,
+          0,
+          "0: one frame per viewpoint message. Above 0: render the latest "
+          "viewpoint this many times a second, also when it has not "
+          "changed, as the QUIC server does for /player-wt.");
 // The three sparkrtc switches (rtc_base/helpers.h). MAE is off by default
 // here; the localvideo example turns it on.
 ABSL_FLAG(bool, enable_mae, false, "Enable the More Adaptive Encoder.");
@@ -96,13 +103,15 @@ bool WriteInfo(const std::string& dir, const std::string& field_trials) {
   fprintf(f,
           "{\"enable_mae\":%s,\"enable_adaptive_frame_drop\":%s,"
           "\"disable_frame_drop\":%s,\"field_trials\":\"%s\","
-          "\"candidate_prefix\":\"%s\",\"stats_interval_ms\":%d}\n",
+          "\"candidate_prefix\":\"%s\",\"stats_interval_ms\":%d,"
+          "\"push_fps\":%d}\n",
           rtc::GetEnableMAE() ? "true" : "false",
           rtc::GetEnableAdaptiveFrameDrop() ? "true" : "false",
           rtc::GetDisableFrameDrop() ? "true" : "false",
           JsonEscape(field_trials).c_str(),
           JsonEscape(absl::GetFlag(FLAGS_candidate_prefix)).c_str(),
-          absl::GetFlag(FLAGS_stats_interval_ms));
+          absl::GetFlag(FLAGS_stats_interval_ms),
+          absl::GetFlag(FLAGS_push_fps));
   fclose(f);
   return true;
 }
@@ -138,6 +147,7 @@ int main(int argc, char* argv[]) {
   options.candidate_prefix = absl::GetFlag(FLAGS_candidate_prefix);
   options.stats_interval_ms = absl::GetFlag(FLAGS_stats_interval_ms);
   options.max_duration_s = absl::GetFlag(FLAGS_max_duration_s);
+  options.push_fps = absl::GetFlag(FLAGS_push_fps);
 
   if (!WriteInfo(options.out_dir, field_trials)) {
     fprintf(stderr, "Cannot write %s/sender_info.json\n",

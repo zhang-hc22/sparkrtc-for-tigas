@@ -1,6 +1,7 @@
 /*
  *  TIGAS sender: renders each viewpoint the page sends over the DataChannel
- *  and streams the frames as one video track (x264, GCC).
+ *  and streams the frames as one video track (x264, GCC). With push_fps it
+ *  renders the latest viewpoint push_fps times a second instead.
  */
 
 #ifndef EXAMPLES_TIGAS_TIGAS_SENDER_H_
@@ -42,6 +43,10 @@ struct SenderOptions {
   std::string candidate_prefix;
   int stats_interval_ms = 100;
   int max_duration_s = 900;
+  // 0: one frame per viewpoint message, in arrival order. Above 0: a frame
+  // of the latest viewpoint every 1/push_fps s, as the QUIC server's
+  // TimedSend does for /player-wt (gs_app.py).
+  int push_fps = 0;
 };
 
 class TigasSender : public webrtc::PeerConnectionObserver,
@@ -65,6 +70,7 @@ class TigasSender : public webrtc::PeerConnectionObserver,
  private:
   struct Pose {
     int i = 0;
+    int64_t seq = -1;          // the page's message number, if it sends one
     std::string line;
     double t_arrive = 0;       // wall clock, ms
     double t_arrive_mono = 0;  // monotonic clock, ms
@@ -102,6 +108,10 @@ class TigasSender : public webrtc::PeerConnectionObserver,
   void SendNextSignal();
   void Tick();
   void RenderLoop();
+  void PushLoop();
+  // Renders the pose and hands the frame to the encoder; false when the
+  // worker is gone. tick is the push tick, or -1.
+  bool RenderAndPush(const Pose& pose, int64_t tick);
   void Shutdown(const char* reason);
 
   PeerConnectionClient* const client_;
@@ -136,7 +146,11 @@ class TigasSender : public webrtc::PeerConnectionObserver,
   std::mutex mu_;
   std::condition_variable cv_;
   std::deque<Pose> queue_;  // guarded by mu_
-  bool stop_ = false;       // guarded by mu_
+  // Push mode: the latest pose and the messages since the last tick.
+  Pose latest_;              // guarded by mu_
+  bool has_latest_ = false;  // guarded by mu_
+  size_t since_tick_ = 0;    // guarded by mu_
+  bool stop_ = false;        // guarded by mu_
   int64_t last_ntp_ms_ = 0;  // render thread only
 
   FILE* frames_log_ = nullptr;  // render thread only after Start()
