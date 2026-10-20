@@ -34,6 +34,7 @@ constexpr TimeDelta kDefaultRtt = TimeDelta::Millis(200);
 constexpr double kDefaultBackoffFactor = 0.85;
 
 constexpr char kBweBackOffFactorExperiment[] = "WebRTC-BweBackOffFactor";
+constexpr char kTigasMortiseExperiment[] = "WebRTC-Tigas-Mortise";
 
 double ReadBackoffFactor(const FieldTrialsView& key_value_config) {
   std::string experiment_string =
@@ -81,7 +82,10 @@ AimdRateControl::AimdRateControl(const FieldTrialsView& key_value_config,
       no_bitrate_increase_in_alr_(
           key_value_config.IsEnabled("WebRTC-DontIncreaseDelayBasedBweInAlr")),
       subtract_additional_backoff_term_(!key_value_config.IsDisabled(
-          "WebRTC-Bwe-SubtractAdditionalBackoffTerm")) {
+          "WebRTC-Bwe-SubtractAdditionalBackoffTerm")),
+      mortise_(send_side && key_value_config.IsEnabled(kTigasMortiseExperiment)
+                   ? std::make_unique<TradeOffControl>()
+                   : nullptr) {
   ParseFieldTrial(
       {&disable_estimate_bounded_increase_,
        &use_current_estimate_as_min_upper_bound_},
@@ -92,6 +96,8 @@ AimdRateControl::AimdRateControl(const FieldTrialsView& key_value_config,
   RTC_LOG(LS_INFO) << "Using aimd rate control with back off factor " << beta_;
   RTC_LOG(LS_INFO) << "TigasAimdIncrease ai " << additive_increase_scale_.Get()
                    << " mi " << multiplicative_increase_factor_.Get();
+  RTC_LOG(LS_INFO) << "TigasMortise enabled=" << MortiseEnabled()
+                   << " send_side=" << send_side;
 }
 
 AimdRateControl::~AimdRateControl() {}
@@ -152,6 +158,12 @@ void AimdRateControl::SetRtt(TimeDelta rtt) {
   rtt_ = rtt;
 }
 
+void AimdRateControl::UpdateNetworkEstimate(TimeDelta rtt,
+                                            DataRate throughput) {
+  if (mortise_)
+    mortise_->UpdateTradeOffEstimate(rtt, throughput);
+}
+
 DataRate AimdRateControl::Update(const RateControlInput& input,
                                  Timestamp at_time) {
   // Set the initial bit rate value to what we're receiving the first half
@@ -206,6 +218,9 @@ double AimdRateControl::GetNearMaxIncreaseRateBpsPerSecond() const {
   TimeDelta response_time = rtt_ + TimeDelta::Millis(100);
 
   response_time = response_time * 2;
+  // TIGAS: Mortise's scale goes before the floor, as in 8b09a04.
+  if (mortise_)
+    avg_packet_size = mortise_additive_coef_ * avg_packet_size;
   double increase_rate_bps_per_second =
       (avg_packet_size / response_time).bps<double>();
   double kMinIncreaseRateBpsPerSecond = 4000;
@@ -229,6 +244,15 @@ TimeDelta AimdRateControl::GetExpectedBandwidthPeriod() const {
 void AimdRateControl::ChangeBitrate(const RateControlInput& input,
                                     Timestamp at_time) {
   absl::optional<DataRate> new_bitrate;
+  // TIGAS: Mortise moves its trade-off once a period and with it the three
+  // parameters, before this update (8b09a04 aimd_rate_control.cc:279-283).
+  if (mortise_) {
+    mortise_->GetQoeLambda();
+    if (mortise_->UpdateTradeoff(at_time)) {
+      mortise_->AdjustProbingParameters(&beta_, &mortise_alpha_,
+                                        &mortise_additive_coef_);
+    }
+  }
   DataRate estimated_throughput =
       input.estimated_throughput.value_or(latest_estimated_throughput_);
   if (input.estimated_throughput)
@@ -346,6 +370,8 @@ void AimdRateControl::ChangeBitrate(const RateControlInput& input,
   }
 
   current_bitrate_ = ClampBitrate(new_bitrate.value_or(current_bitrate_));
+  if (mortise_)
+    mortise_->UpdateTargetBitrate(at_time, current_bitrate_);
 }
 
 DataRate AimdRateControl::ClampBitrate(DataRate new_bitrate) const {
@@ -371,7 +397,8 @@ DataRate AimdRateControl::MultiplicativeRateIncrease(
     Timestamp at_time,
     Timestamp last_time,
     DataRate current_bitrate) const {
-  double alpha = multiplicative_increase_factor_.Get();
+  double alpha =
+      mortise_ ? mortise_alpha_ : multiplicative_increase_factor_.Get();
   if (last_time.IsFinite()) {
     auto time_since_last_update = at_time - last_time;
     alpha = pow(alpha, std::min(time_since_last_update.seconds<double>(), 1.0));

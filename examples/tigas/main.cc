@@ -90,6 +90,14 @@ ABSL_FLAG(double,
           "Per-second factor of GCC's multiplicative increase. If this or "
           "--gcc_ai is not the default, WebRTC-Tigas-AimdIncrease/ai:..,mi:../ "
           "is added to the field trials.");
+ABSL_FLAG(bool,
+          enable_mortise,
+          false,
+          "Let Mortise set GCC's back-off factor, multiplicative and additive "
+          "increase about once a second "
+          "(modules/remote_bitrate_estimator/tradeoff_control.h): adds "
+          "WebRTC-Tigas-Mortise/Enabled/ to the field trials. Not with "
+          "--gcc_ai or --gcc_mi.");
 
 namespace {
 
@@ -115,14 +123,15 @@ bool WriteInfo(const std::string& dir, const std::string& field_trials) {
           "{\"enable_mae\":%s,\"enable_adaptive_frame_drop\":%s,"
           "\"disable_frame_drop\":%s,\"field_trials\":\"%s\","
           "\"candidate_prefix\":\"%s\",\"stats_interval_ms\":%d,"
-          "\"push_fps\":%d}\n",
+          "\"push_fps\":%d,\"enable_mortise\":%s}\n",
           rtc::GetEnableMAE() ? "true" : "false",
           rtc::GetEnableAdaptiveFrameDrop() ? "true" : "false",
           rtc::GetDisableFrameDrop() ? "true" : "false",
           JsonEscape(field_trials).c_str(),
           JsonEscape(absl::GetFlag(FLAGS_candidate_prefix)).c_str(),
           absl::GetFlag(FLAGS_stats_interval_ms),
-          absl::GetFlag(FLAGS_push_fps));
+          absl::GetFlag(FLAGS_push_fps),
+          absl::GetFlag(FLAGS_enable_mortise) ? "true" : "false");
   fclose(f);
   return true;
 }
@@ -146,6 +155,15 @@ int main(int argc, char* argv[]) {
     snprintf(trial, sizeof(trial), "WebRTC-Tigas-AimdIncrease/ai:%g,mi:%g/",
              gcc_ai, gcc_mi);
     field_trials += trial;
+  }
+  if (absl::GetFlag(FLAGS_enable_mortise)) {
+    if (gcc_ai != 1.0 || gcc_mi != 1.08) {
+      fprintf(stderr,
+              "--enable_mortise sets GCC's increase itself; drop --gcc_ai "
+              "and --gcc_mi\n");
+      return 1;
+    }
+    field_trials += "WebRTC-Tigas-Mortise/Enabled/";
   }
   webrtc::field_trial::InitFieldTrialsFromString(field_trials.c_str());
 

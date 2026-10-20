@@ -122,6 +122,16 @@ DelayBasedBwe::Result DelayBasedBwe::IncomingPacketFeedbackVector(
   bool delayed_feedback = true;
   bool recovered_from_overuse = false;
   BandwidthUsage prev_detector_state = active_delay_detector_->State();
+  // TIGAS: Mortise takes the largest feedback_time - send_time of this
+  // feedback and the acknowledged bitrate (8b09a04 delay_based_bwe.cc:157-173).
+  if (rate_control_.MortiseEnabled() && acked_bitrate) {
+    TimeDelta max_feedback_rtt = TimeDelta::MinusInfinity();
+    for (const auto& feedback : packet_feedback_vector) {
+      max_feedback_rtt = std::max(
+          max_feedback_rtt, msg.feedback_time - feedback.sent_packet.send_time);
+    }
+    rate_control_.UpdateNetworkEstimate(max_feedback_rtt, *acked_bitrate);
+  }
   for (const auto& packet_feedback : packet_feedback_vector) {
     delayed_feedback = false;
     IncomingPacketFeedback(packet_feedback, msg.feedback_time);
