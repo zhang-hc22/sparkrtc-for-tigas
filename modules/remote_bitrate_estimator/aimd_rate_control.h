@@ -122,6 +122,9 @@ class AimdRateControl {
   // the per-second factor of the multiplicative increase.
   FieldTrialParameter<double> additive_increase_scale_{"ai", 1.0};
   FieldTrialParameter<double> multiplicative_increase_factor_{"mi", 1.08};
+  // TIGAS: WebRTC-Tigas-Detector/underuse_hold:false/ takes an underuse as
+  // normal (the rate increases) instead of holding the rate.
+  FieldTrialParameter<bool> underuse_hold_{"underuse_hold", true};
   // TIGAS: with WebRTC-Tigas-Mortise, Mortise sets beta_, the
   // multiplicative increase in place of mi, and a scale of the additive
   // increase applied before its 4 kbit/s floor, as 8b09a04 does

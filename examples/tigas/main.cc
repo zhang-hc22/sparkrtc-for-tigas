@@ -7,7 +7,9 @@
 
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 
+#include <initializer_list>
 #include <string>
 
 #include "absl/flags/flag.h"
@@ -97,7 +99,29 @@ ABSL_FLAG(bool,
           "increase about once a second "
           "(modules/remote_bitrate_estimator/tradeoff_control.h): adds "
           "WebRTC-Tigas-Mortise/Enabled/ to the field trials. Not with "
-          "--gcc_ai or --gcc_mi.");
+          "--gcc_ai or --gcc_mi. The same as --mortise=v1.");
+ABSL_FLAG(std::string,
+          mortise,
+          "",
+          "Mortise's version: v1 is the controller of 920865ec29 "
+          "(mortise_v1), as --enable_mortise. Empty: off.");
+ABSL_FLAG(std::string,
+          mortise_args,
+          "",
+          "Experiment options on top of --mortise=v1, key:value,... with keys "
+          "fixed_u (0 to 1), umin_rq (0 or 1) and probe (a step of u) "
+          "(modules/remote_bitrate_estimator/tradeoff_control.h): the field "
+          "trial becomes WebRTC-Tigas-Mortise/Enabled,ARGS/.");
+ABSL_FLAG(std::string,
+          gcc_detector_args,
+          "",
+          "GCC's overuse detector, key:value,... with keys window_ms (time "
+          "window of the slope fit, default 100), overuse_ms (how long an "
+          "overuse must last, 10), gain (of the slope, 4) and underuse_hold "
+          "(0 takes an underuse as normal, 1): adds "
+          "WebRTC-Tigas-Detector/ARGS/ "
+          "(modules/congestion_controller/goog_cc/trendline_estimator.h, "
+          "modules/remote_bitrate_estimator/aimd_rate_control.h).");
 
 namespace {
 
@@ -115,7 +139,43 @@ std::string JsonEscape(const std::string& s) {
   return out;
 }
 
-bool WriteInfo(const std::string& dir, const std::string& field_trials) {
+// ARGS is empty or key:value,... with each key in keys; the keys in flags
+// take 0 or 1, the others a number.
+bool CheckArgs(const char* flag,
+               const std::string& args,
+               std::initializer_list<const char*> keys,
+               std::initializer_list<const char*> flags) {
+  size_t start = 0;
+  while (start < args.size()) {
+    size_t end = args.find(',', start);
+    if (end == std::string::npos)
+      end = args.size();
+    const std::string item = args.substr(start, end - start);
+    const size_t colon = item.find(':');
+    const std::string key = item.substr(0, colon);
+    const std::string value =
+        colon == std::string::npos ? "" : item.substr(colon + 1);
+    bool known = false, is_flag = false;
+    for (const char* k : keys)
+      known |= key == k;
+    for (const char* k : flags)
+      is_flag |= key == k;
+    char* rest = nullptr;
+    strtod(value.c_str(), &rest);
+    const bool ok = is_flag ? (value == "0" || value == "1")
+                            : (!value.empty() && *rest == '\0');
+    if (!known || !ok) {
+      fprintf(stderr, "--%s: bad item '%s'\n", flag, item.c_str());
+      return false;
+    }
+    start = end + 1;
+  }
+  return true;
+}
+
+bool WriteInfo(const std::string& dir,
+               const std::string& field_trials,
+               const std::string& mortise) {
   FILE* f = fopen((dir + "/sender_info.json").c_str(), "w");
   if (!f)
     return false;
@@ -123,15 +183,18 @@ bool WriteInfo(const std::string& dir, const std::string& field_trials) {
           "{\"enable_mae\":%s,\"enable_adaptive_frame_drop\":%s,"
           "\"disable_frame_drop\":%s,\"field_trials\":\"%s\","
           "\"candidate_prefix\":\"%s\",\"stats_interval_ms\":%d,"
-          "\"push_fps\":%d,\"enable_mortise\":%s}\n",
+          "\"push_fps\":%d,\"enable_mortise\":%s,\"mortise\":\"%s\","
+          "\"mortise_args\":\"%s\",\"gcc_detector_args\":\"%s\"}\n",
           rtc::GetEnableMAE() ? "true" : "false",
           rtc::GetEnableAdaptiveFrameDrop() ? "true" : "false",
           rtc::GetDisableFrameDrop() ? "true" : "false",
           JsonEscape(field_trials).c_str(),
           JsonEscape(absl::GetFlag(FLAGS_candidate_prefix)).c_str(),
           absl::GetFlag(FLAGS_stats_interval_ms),
-          absl::GetFlag(FLAGS_push_fps),
-          absl::GetFlag(FLAGS_enable_mortise) ? "true" : "false");
+          absl::GetFlag(FLAGS_push_fps), mortise.empty() ? "false" : "true",
+          JsonEscape(mortise).c_str(),
+          JsonEscape(absl::GetFlag(FLAGS_mortise_args)).c_str(),
+          JsonEscape(absl::GetFlag(FLAGS_gcc_detector_args)).c_str());
   fclose(f);
   return true;
 }
@@ -156,15 +219,45 @@ int main(int argc, char* argv[]) {
              gcc_ai, gcc_mi);
     field_trials += trial;
   }
+  std::string mortise = absl::GetFlag(FLAGS_mortise);
   if (absl::GetFlag(FLAGS_enable_mortise)) {
+    if (!mortise.empty() && mortise != "v1") {
+      fprintf(stderr, "--enable_mortise is --mortise=v1\n");
+      return 1;
+    }
+    mortise = "v1";
+  }
+  if (!mortise.empty() && mortise != "v1") {
+    fprintf(stderr, "--mortise: unknown version '%s'\n", mortise.c_str());
+    return 1;
+  }
+  const std::string mortise_args = absl::GetFlag(FLAGS_mortise_args);
+  if (!mortise_args.empty() && mortise.empty()) {
+    fprintf(stderr, "--mortise_args needs --mortise\n");
+    return 1;
+  }
+  if (!CheckArgs("mortise_args", mortise_args, {"fixed_u", "umin_rq", "probe"},
+                 {"umin_rq"}))
+    return 1;
+  if (!mortise.empty()) {
     if (gcc_ai != 1.0 || gcc_mi != 1.08) {
       fprintf(stderr,
-              "--enable_mortise sets GCC's increase itself; drop --gcc_ai "
+              "--mortise sets GCC's increase itself; drop --gcc_ai "
               "and --gcc_mi\n");
       return 1;
     }
-    field_trials += "WebRTC-Tigas-Mortise/Enabled/";
+    // v1 with no options is the trial of 920865ec29.
+    field_trials += mortise_args.empty()
+                        ? "WebRTC-Tigas-Mortise/Enabled/"
+                        : "WebRTC-Tigas-Mortise/Enabled," + mortise_args + "/";
   }
+  const std::string detector_args = absl::GetFlag(FLAGS_gcc_detector_args);
+  if (!CheckArgs("gcc_detector_args", detector_args,
+                 {"window_ms", "overuse_ms", "gain", "underuse_hold"},
+                 {"underuse_hold"}))
+    return 1;
+  if (!detector_args.empty())
+    field_trials += "WebRTC-Tigas-Detector/" + detector_args + "/";
   webrtc::field_trial::InitFieldTrialsFromString(field_trials.c_str());
 
   rtc::SetEnableMAE(absl::GetFlag(FLAGS_enable_mae));
@@ -185,7 +278,7 @@ int main(int argc, char* argv[]) {
   options.max_duration_s = absl::GetFlag(FLAGS_max_duration_s);
   options.push_fps = absl::GetFlag(FLAGS_push_fps);
 
-  if (!WriteInfo(options.out_dir, field_trials)) {
+  if (!WriteInfo(options.out_dir, field_trials, mortise)) {
     fprintf(stderr, "Cannot write %s/sender_info.json\n",
             options.out_dir.c_str());
     return 1;

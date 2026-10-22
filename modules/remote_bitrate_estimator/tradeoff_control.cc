@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <numeric>
 
+#include "rtc_base/experiments/field_trial_parser.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/strings/string_builder.h"
 #include "rtc_base/time_utils.h"
@@ -17,6 +18,8 @@ namespace {
 constexpr double kMaxTradeOff = 1.0;
 constexpr int64_t kChangePointIntervalMs = 3000;
 constexpr int64_t kPeriodMs = 1000;
+// umin_rq: the window of the least R.
+constexpr TimeDelta kRttMinWindow = TimeDelta::Seconds(10);
 
 // 8b09a04 sums into an int (std::accumulate(..., 0)), which overflows at
 // about 2.1e9 bit/s summed over a period.
@@ -27,12 +30,25 @@ int64_t Mean(const std::deque<int64_t>& values) {
 
 }  // namespace
 
-TradeOffControl::TradeOffControl()
-    : tradeoff_state_(TradeoffProbingState::kProbing),
+TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
+  FieldTrialParameter<double> fixed_u("fixed_u", -1.0);
+  FieldTrialParameter<bool> umin_rq("umin_rq", false);
+  FieldTrialParameter<double> probe("probe", 0.0);
+  ParseFieldTrial({&fixed_u, &umin_rq, &probe}, trial);
+  TradeOffOptions options;
+  options.fixed_u = std::min(fixed_u.Get(), kMaxTradeOff);
+  options.umin_rq = umin_rq.Get();
+  options.probe = probe.Get();
+  return options;
+}
+
+TradeOffControl::TradeOffControl(const TradeOffOptions& options)
+    : options_(options),
+      tradeoff_state_(TradeoffProbingState::kProbing),
       time_last_decrease_bitrate_(Timestamp::MinusInfinity()),
       time_last_change_tradeoff_(Timestamp::MinusInfinity()),
-      cur_trade_off_(0.8),
-      last_trade_off_(0.8),
+      cur_trade_off_(options.fixed_u >= 0.0 ? options.fixed_u : 0.8),
+      last_trade_off_(options.fixed_u >= 0.0 ? options.fixed_u : 0.8),
       qoe_lambda_(0.0),
       last_period_bitrate_(DataRate::KilobitsPerSec(1000)),
       last_period_tput_(DataRate::KilobitsPerSec(1000)),
@@ -70,7 +86,83 @@ void TradeOffControl::GetQoeLambda() {
   qoe_lambda_ = (last_period_bitrate_.kbps() / 1000.0 + 0.15) / 150.0;
 }
 
+const char* TradeOffControl::ClosePeriod(Timestamp at_time, Period* period) {
+  if (target_bitrates_.empty())
+    return "skip_no_target";
+  // 8b09a04 divides by zero here.
+  if (network_tputs_.empty() || network_rtts_.empty()) {
+    target_bitrates_.clear();
+    network_rtts_.clear();
+    network_tputs_.clear();
+    return "skip_no_sample";
+  }
+
+  period->bitrate_bps = Mean(target_bitrates_);
+  period->tput_bps = Mean(network_tputs_);
+  period->rtt_ms = Mean(network_rtts_);
+  const DataRate cur_bitrate = DataRate::BitsPerSec(period->bitrate_bps);
+  const DataRate cur_tput = DataRate::BitsPerSec(period->tput_bps);
+  const TimeDelta cur_rtt = TimeDelta::Millis(period->rtt_ms);
+
+  target_bitrates_.clear();
+  network_rtts_.clear();
+  network_tputs_.clear();
+
+  const double cur_qoe = (static_cast<double>(cur_bitrate.kbps()) / 1000.0) -
+                         qoe_lambda_ * static_cast<double>(cur_rtt.ms());
+  const double last_qoe =
+      (static_cast<double>(last_period_bitrate_.kbps()) / 1000.0) -
+      qoe_lambda_ * static_cast<double>(last_period_rtt_.ms());
+
+  // Keep it from being over-aggressive.
+  double rtt_for_min = static_cast<double>(cur_rtt.ms());
+  period->rtt_min_ms = -1;
+  if (options_.umin_rq) {
+    period_rtts_.emplace_back(at_time, cur_rtt.ms());
+    while (at_time - period_rtts_.front().first >= kRttMinWindow)
+      period_rtts_.pop_front();
+    period->rtt_min_ms = cur_rtt.ms();
+    for (const auto& p : period_rtts_)
+      period->rtt_min_ms = std::min(period->rtt_min_ms, p.second);
+    rtt_for_min = static_cast<double>(cur_rtt.ms() - period->rtt_min_ms);
+  }
+  double min_delta = 0.15 * std::min(rtt_for_min, 250.0) / 50.0 + 0.15;
+  if (cur_bitrate.kbps() > 1700)
+    min_delta = 0.7;
+  if (cur_bitrate.kbps() > 2200)
+    min_delta = 0.8;
+  if (cur_bitrate.kbps() > 2500)
+    min_delta = 0.9;
+  period->qoe = cur_qoe;
+  period->last_qoe = last_qoe;
+  period->min_delta = min_delta;
+
+  last_period_rtt_ = cur_rtt;
+  last_period_tput_ = cur_tput;
+  last_period_bitrate_ = cur_bitrate;
+  return nullptr;
+}
+
+bool TradeOffControl::UpdateFixed(Timestamp at_time) {
+  const double u = cur_trade_off_;
+  if (time_last_change_tradeoff_.IsMinusInfinity()) {
+    // The first update: GCC takes the parameters of the fixed u.
+    time_last_change_tradeoff_ = at_time;
+    Log("fixed_init", at_time, u, nullptr);
+    return true;
+  }
+  if (at_time.ms() - time_last_change_tradeoff_.ms() < kPeriodMs)
+    return false;
+  time_last_change_tradeoff_ = at_time;
+  Period period;
+  const char* skip = ClosePeriod(at_time, &period);
+  Log(skip ? skip : "fixed", at_time, u, skip ? nullptr : &period);
+  return false;
+}
+
 bool TradeOffControl::UpdateTradeoff(Timestamp at_time) {
+  if (options_.fixed_u >= 0.0)
+    return UpdateFixed(at_time);
   const double u_before = cur_trade_off_;
   if (time_last_change_tradeoff_.IsMinusInfinity())
     time_last_change_tradeoff_ = at_time;
@@ -101,53 +193,14 @@ bool TradeOffControl::UpdateTradeoff(Timestamp at_time) {
   }
 
   time_last_change_tradeoff_ = at_time;
-  if (target_bitrates_.empty()) {
-    Log("skip_no_target", at_time, u_before, nullptr);
-    return false;
-  }
-  // 8b09a04 divides by zero here.
-  if (network_tputs_.empty() || network_rtts_.empty()) {
-    target_bitrates_.clear();
-    network_rtts_.clear();
-    network_tputs_.clear();
-    Log("skip_no_sample", at_time, u_before, nullptr);
-    return false;
-  }
-
   Period period;
-  period.bitrate_bps = Mean(target_bitrates_);
-  period.tput_bps = Mean(network_tputs_);
-  period.rtt_ms = Mean(network_rtts_);
-  const DataRate cur_bitrate = DataRate::BitsPerSec(period.bitrate_bps);
-  const DataRate cur_tput = DataRate::BitsPerSec(period.tput_bps);
-  const TimeDelta cur_rtt = TimeDelta::Millis(period.rtt_ms);
-
-  target_bitrates_.clear();
-  network_rtts_.clear();
-  network_tputs_.clear();
-
-  const double cur_qoe = (static_cast<double>(cur_bitrate.kbps()) / 1000.0) -
-                         qoe_lambda_ * static_cast<double>(cur_rtt.ms());
-  const double last_qoe =
-      (static_cast<double>(last_period_bitrate_.kbps()) / 1000.0) -
-      qoe_lambda_ * static_cast<double>(last_period_rtt_.ms());
-
-  // Keep it from being over-aggressive.
-  double min_delta =
-      0.15 * std::min(static_cast<double>(cur_rtt.ms()), 250.0) / 50.0 + 0.15;
-  if (cur_bitrate.kbps() > 1700)
-    min_delta = 0.7;
-  if (cur_bitrate.kbps() > 2200)
-    min_delta = 0.8;
-  if (cur_bitrate.kbps() > 2500)
-    min_delta = 0.9;
-  period.qoe = cur_qoe;
-  period.last_qoe = last_qoe;
-  period.min_delta = min_delta;
-
-  last_period_rtt_ = cur_rtt;
-  last_period_tput_ = cur_tput;
-  last_period_bitrate_ = cur_bitrate;
+  if (const char* skip = ClosePeriod(at_time, &period)) {
+    Log(skip, at_time, u_before, nullptr);
+    return false;
+  }
+  const double cur_qoe = period.qoe;
+  const double last_qoe = period.last_qoe;
+  const double min_delta = period.min_delta;
 
   // After a change point, wait for the next decrease, lowering u meanwhile.
   if (tradeoff_state_ == TradeoffProbingState::kChangePointDetected) {
@@ -182,6 +235,15 @@ bool TradeOffControl::UpdateTradeoff(Timestamp at_time) {
     Log("rule_down", at_time, u_before, &period);
     return true;
   }
+  if (options_.probe > 0.0 && cur_trade_off_ == last_trade_off_) {
+    const bool up = cur_trade_off_ <= min_delta + 0.01;
+    last_trade_off_ = cur_trade_off_;
+    cur_trade_off_ += up ? options_.probe : -options_.probe;
+    cur_trade_off_ = std::max(min_delta, cur_trade_off_);
+    cur_trade_off_ = std::min(kMaxTradeOff, cur_trade_off_);
+    Log(up ? "probe_up" : "probe_down", at_time, u_before, &period);
+    return true;
+  }
   Log("rule_hold", at_time, u_before, &period);
   return false;
 }
@@ -210,6 +272,8 @@ void TradeOffControl::Log(const char* branch,
     sb << " bitrate=" << period->bitrate_bps << " tput=" << period->tput_bps
        << " rtt=" << period->rtt_ms << " q=" << period->qoe
        << " q_last=" << period->last_qoe << " u_min=" << period->min_delta;
+    if (period->rtt_min_ms >= 0)
+      sb << " rtt_min=" << period->rtt_min_ms;
   }
   RTC_LOG(LS_INFO) << sb.str();
 }

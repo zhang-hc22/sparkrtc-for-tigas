@@ -99,7 +99,11 @@ class TrendlineEstimator : public DelayIncreaseDetectorInterface {
   // Parameters.
   TrendlineEstimatorSettings settings_;
   const double smoothing_coef_;
+  // TIGAS: WebRTC-Tigas-Detector/gain:..,overuse_ms:..,window_ms:../ sets
+  // threshold_gain_ (default 4), overusing_time_threshold_ (10 ms) and the
+  // time window of the slope fit (100 ms, sparkrtc a1870c4ad6).
   const double threshold_gain_;
+  double window_ms_;
   // Used by the existing threshold.
   int num_of_deltas_;
   // Keep the arrival times small by using the change from the first packet.
