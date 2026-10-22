@@ -19,7 +19,8 @@
  *  line is logged per period instead of the per-update warnings.
  *
  *  TradeOffOptions are experiment options on top of this, read from
- *  WebRTC-Tigas-Mortise/Enabled,fixed_u:..,umin_rq:..,probe:../. With none
+ *  WebRTC-Tigas-Mortise/Enabled,fixed_u:..,umin_rq:..,probe:..,
+ *  det_overuse_ms:..,det_window_ms:../. With none
  *  set the controller is mortise_v1, the one of 920865ec29.
  */
 
@@ -51,9 +52,17 @@ struct TradeOffOptions {
   // up if u is at most u_min + 0.01, else down (branches probe_up,
   // probe_down), so that the rule has a change to compare next period.
   double probe = 0.0;
+  // Above 0: GCC's overuse detector takes this overuse time and this time
+  // window of the slope fit (ms) for u <= 0.8, its configured values at
+  // u = 1, linear in between (DetectorShare).
+  double det_overuse_ms = 0.0;
+  double det_window_ms = 0.0;
 
   static TradeOffOptions Parse(absl::string_view trial);
-  bool Any() const { return fixed_u >= 0.0 || umin_rq || probe > 0.0; }
+  bool Detector() const { return det_overuse_ms > 0.0 || det_window_ms > 0.0; }
+  bool Any() const {
+    return fixed_u >= 0.0 || umin_rq || probe > 0.0 || Detector();
+  }
 };
 
 class TradeOffControl {
@@ -73,6 +82,10 @@ class TradeOffControl {
   void GetQoeLambda();
   // Called before each AIMD update. Returns true if the trade-off changed.
   bool UpdateTradeoff(Timestamp at_time);
+  const TradeOffOptions& options() const { return options_; }
+  // How far the detector moves from its configured values to the det_*
+  // options at the current u: min(1, (1 - u) / 0.2).
+  double DetectorShare() const;
 
  private:
   enum class TradeoffProbingState {

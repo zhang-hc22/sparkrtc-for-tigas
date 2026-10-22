@@ -186,7 +186,9 @@ TrendlineEstimator::TrendlineEstimator(
       threshold_gain_(ReadDetector(key_value_config,
                                    "gain",
                                    kDefaultTrendlineThresholdGain)),
-      window_ms_(ReadDetector(key_value_config, "window_ms", kDefaultWindowMs)),
+      base_window_ms_(
+          ReadDetector(key_value_config, "window_ms", kDefaultWindowMs)),
+      window_ms_(base_window_ms_),
       num_of_deltas_(0),
       first_arrival_time_ms_(-1),
       accumulated_delay_(0),
@@ -194,9 +196,10 @@ TrendlineEstimator::TrendlineEstimator(
       delay_hist_(),
       k_up_(0.0087),
       k_down_(0.039),
-      overusing_time_threshold_(ReadDetector(key_value_config,
-                                             "overuse_ms",
-                                             kOverUsingTimeThreshold)),
+      base_overuse_ms_(ReadDetector(key_value_config,
+                                    "overuse_ms",
+                                    kOverUsingTimeThreshold)),
+      overusing_time_threshold_(base_overuse_ms_),
       threshold_(12.5),
       prev_modified_trend_(NAN),
       last_update_ms_(-1),
@@ -218,6 +221,24 @@ TrendlineEstimator::TrendlineEstimator(
 }
 
 TrendlineEstimator::~TrendlineEstimator() {}
+
+void TrendlineEstimator::SetTigasDetector(double share,
+                                          double overuse_ms,
+                                          double window_ms) {
+  const double overuse =
+      overuse_ms > 0.0
+          ? base_overuse_ms_ + share * (overuse_ms - base_overuse_ms_)
+          : overusing_time_threshold_;
+  const double window =
+      window_ms > 0.0 ? base_window_ms_ + share * (window_ms - base_window_ms_)
+                      : window_ms_;
+  if (overuse == overusing_time_threshold_ && window == window_ms_)
+    return;
+  overusing_time_threshold_ = overuse;
+  window_ms_ = window;
+  RTC_LOG(LS_INFO) << "TigasDetector set share=" << share
+                   << " overuse_ms=" << overuse << " window_ms=" << window;
+}
 
 void TrendlineEstimator::UpdateTrendline(double recv_delta_ms,
                                          double send_delta_ms,

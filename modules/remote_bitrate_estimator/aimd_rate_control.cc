@@ -171,6 +171,17 @@ void AimdRateControl::UpdateNetworkEstimate(TimeDelta rtt,
     mortise_->UpdateTradeOffEstimate(rtt, throughput);
 }
 
+bool AimdRateControl::MortiseDetector(double* share,
+                                      double* overuse_ms,
+                                      double* window_ms) const {
+  if (!mortise_ || !mortise_->options().Detector())
+    return false;
+  *share = mortise_->DetectorShare();
+  *overuse_ms = mortise_->options().det_overuse_ms;
+  *window_ms = mortise_->options().det_window_ms;
+  return true;
+}
+
 DataRate AimdRateControl::Update(const RateControlInput& input,
                                  Timestamp at_time) {
   // Set the initial bit rate value to what we're receiving the first half

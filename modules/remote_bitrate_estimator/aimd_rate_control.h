@@ -72,6 +72,11 @@ class AimdRateControl {
   // One transport feedback for Mortise: its largest feedback_time - send_time
   // and the acknowledged bitrate.
   void UpdateNetworkEstimate(TimeDelta rtt, DataRate throughput);
+  // With Mortise's det_* options: the share for the current u and the two
+  // values of the options (TradeOffOptions); false without them.
+  bool MortiseDetector(double* share,
+                       double* overuse_ms,
+                       double* window_ms) const;
 
  private:
   enum class RateControlState { kRcHold, kRcIncrease, kRcDecrease };

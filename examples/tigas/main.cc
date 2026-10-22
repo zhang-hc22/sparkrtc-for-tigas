@@ -109,7 +109,9 @@ ABSL_FLAG(std::string,
           mortise_args,
           "",
           "Experiment options on top of --mortise=v1, key:value,... with keys "
-          "fixed_u (0 to 1), umin_rq (0 or 1) and probe (a step of u) "
+          "fixed_u (0 to 1), umin_rq (0 or 1), probe (a step of u), "
+          "det_overuse_ms and det_window_ms (GCC's overuse detector for "
+          "u <= 0.8, its default at u = 1) "
           "(modules/remote_bitrate_estimator/tradeoff_control.h): the field "
           "trial becomes WebRTC-Tigas-Mortise/Enabled,ARGS/.");
 ABSL_FLAG(std::string,
@@ -236,7 +238,9 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "--mortise_args needs --mortise\n");
     return 1;
   }
-  if (!CheckArgs("mortise_args", mortise_args, {"fixed_u", "umin_rq", "probe"},
+  if (!CheckArgs("mortise_args", mortise_args,
+                 {"fixed_u", "umin_rq", "probe", "det_overuse_ms",
+                  "det_window_ms"},
                  {"umin_rq"}))
     return 1;
   if (!mortise.empty()) {

@@ -34,11 +34,16 @@ TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
   FieldTrialParameter<double> fixed_u("fixed_u", -1.0);
   FieldTrialParameter<bool> umin_rq("umin_rq", false);
   FieldTrialParameter<double> probe("probe", 0.0);
-  ParseFieldTrial({&fixed_u, &umin_rq, &probe}, trial);
+  FieldTrialParameter<double> det_overuse_ms("det_overuse_ms", 0.0);
+  FieldTrialParameter<double> det_window_ms("det_window_ms", 0.0);
+  ParseFieldTrial(
+      {&fixed_u, &umin_rq, &probe, &det_overuse_ms, &det_window_ms}, trial);
   TradeOffOptions options;
   options.fixed_u = std::min(fixed_u.Get(), kMaxTradeOff);
   options.umin_rq = umin_rq.Get();
   options.probe = probe.Get();
+  options.det_overuse_ms = det_overuse_ms.Get();
+  options.det_window_ms = det_window_ms.Get();
   return options;
 }
 
@@ -141,6 +146,10 @@ const char* TradeOffControl::ClosePeriod(Timestamp at_time, Period* period) {
   last_period_tput_ = cur_tput;
   last_period_bitrate_ = cur_bitrate;
   return nullptr;
+}
+
+double TradeOffControl::DetectorShare() const {
+  return std::min(1.0, std::max(0.0, (1.0 - cur_trade_off_) / 0.2));
 }
 
 bool TradeOffControl::UpdateFixed(Timestamp at_time) {
