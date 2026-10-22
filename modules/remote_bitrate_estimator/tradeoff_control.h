@@ -21,7 +21,8 @@
  *  TradeOffOptions are experiment options on top of this, read from
  *  WebRTC-Tigas-Mortise/Enabled,fixed_u:..,umin_rq:..,probe:..,
  *  det_overuse_ms:..,det_window_ms:../. With none
- *  set the controller is mortise_v1, the one of 920865ec29.
+ *  set the controller is mortise_v1, the one of 920865ec29. mortise_v2
+ *  (tigas_sender --mortise=v2) is umin_rq:1,probe:0.1,det_overuse_ms:100.
  */
 
 #ifndef MODULES_REMOTE_BITRATE_ESTIMATOR_TRADEOFF_CONTROL_H_

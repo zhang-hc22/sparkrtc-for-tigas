@@ -104,7 +104,10 @@ ABSL_FLAG(std::string,
           mortise,
           "",
           "Mortise's version: v1 is the controller of 920865ec29 "
-          "(mortise_v1), as --enable_mortise. Empty: off.");
+          "(mortise_v1), as --enable_mortise; v2 is v1 with the options "
+          "umin_rq:1,probe:0.1,det_overuse_ms:100 (mortise_v2), the same "
+          "field trial as --mortise=v1 --mortise_args=... with them. Empty: "
+          "off.");
 ABSL_FLAG(std::string,
           mortise_args,
           "",
@@ -229,14 +232,23 @@ int main(int argc, char* argv[]) {
     }
     mortise = "v1";
   }
-  if (!mortise.empty() && mortise != "v1") {
+  if (!mortise.empty() && mortise != "v1" && mortise != "v2") {
     fprintf(stderr, "--mortise: unknown version '%s'\n", mortise.c_str());
     return 1;
   }
-  const std::string mortise_args = absl::GetFlag(FLAGS_mortise_args);
+  std::string mortise_args = absl::GetFlag(FLAGS_mortise_args);
   if (!mortise_args.empty() && mortise.empty()) {
     fprintf(stderr, "--mortise_args needs --mortise\n");
     return 1;
+  }
+  if (mortise == "v2") {
+    if (!mortise_args.empty()) {
+      fprintf(stderr,
+              "--mortise=v2 has its options; for others use --mortise=v1 "
+              "--mortise_args=...\n");
+      return 1;
+    }
+    mortise_args = "umin_rq:1,probe:0.1,det_overuse_ms:100";
   }
   if (!CheckArgs("mortise_args", mortise_args,
                  {"fixed_u", "umin_rq", "probe", "det_overuse_ms",
