@@ -191,6 +191,10 @@ declare_args() {
 
   spark_use_x264 = true
 
+  # Absolute path of the static libx264.a (X264_BUILD 165, built with
+  # --enable-pic) that spark_use_x264 links.
+  spark_x264_lib = "/mnt/sdcard/sparkrtc_build/x264-install/lib/libx264.a"
+
   # Enable to use H265
   rtc_use_h265 = proprietary_codecs
 

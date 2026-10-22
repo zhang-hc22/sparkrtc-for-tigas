@@ -198,6 +198,15 @@ absl::optional<DataRate> RobustThroughputEstimator::bitrate() const {
   TimeDelta send_duration = last_send_time - first_send_time;
   send_duration = std::max(send_duration, TimeDelta::Millis(1));
 
+  // TIGAS: both terms of the estimate, to see which one limits it.
+  RTC_LOG(LS_INFO) << "TigasThroughput packets " << window_.size()
+                   << " send " << send_size.bytes() << " B / "
+                   << send_duration.us() << " us = "
+                   << (send_size / send_duration).bps() << " bps, recv "
+                   << recv_size.bytes() << " B / " << recv_duration.us()
+                   << " us = " << (recv_size / recv_duration).bps()
+                   << " bps, recv gaps " << largest_recv_gap.us() << " "
+                   << second_largest_recv_gap.us() << " us";
   return std::min(send_size / send_duration, recv_size / recv_duration);
 }
 

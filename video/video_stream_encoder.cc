@@ -733,6 +733,8 @@ VideoStreamEncoder::VideoStreamEncoder(
           !field_trials.IsEnabled("WebRTC-DefaultBitrateLimitsKillSwitch")),
       qp_parsing_allowed_(
           !field_trials.IsEnabled("WebRTC-QpParsingKillSwitch")),
+      encode_every_frame_(
+          field_trials.IsEnabled("WebRTC-Tigas-EncodeEveryFrame")),
       switch_encoder_on_init_failures_(!field_trials.IsDisabled(
           kSwitchEncoderOnInitializationFailuresFieldTrial)),
       vp9_low_tier_core_threshold_(
@@ -1577,7 +1579,8 @@ void VideoStreamEncoder::OnFrame(Timestamp post_time,
   bool cwnd_frame_drop =
       cwnd_frame_drop_interval_ &&
       (cwnd_frame_counter_++ % cwnd_frame_drop_interval_.value() == 0);
-  if (frames_scheduled_for_processing == 1 && !cwnd_frame_drop) {
+  if ((frames_scheduled_for_processing == 1 || encode_every_frame_) &&
+      !cwnd_frame_drop) {
     MaybeEncodeVideoFrame(incoming_frame, post_time.us());
   } else {
     if (cwnd_frame_drop) {
@@ -2489,7 +2492,7 @@ void VideoStreamEncoder::RunPostEncode(const EncodedImage& encoded_image,
 
   if (!frame_size.IsZero()) {
     frame_dropper_.Fill(frame_size.bytes(), !keyframe);
-    RTC_LOG(LS_INFO) << "Send Statistics Send Frame Size: " << frame_size.bytes() << " current time: " << rtc::TimeMillis();
+    RTC_LOG(LS_INFO) << "Send Statistics Send Frame Size: " << frame_size.bytes() << " current time: " << rtc::TimeMillis() << " rtp_ts: " << encoded_image.RtpTimestamp() << " qp: " << encoded_image.qp_ << " key: " << keyframe;
   }
 
   stream_resource_manager_.OnEncodeCompleted(encoded_image, time_sent_us,

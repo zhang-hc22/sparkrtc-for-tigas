@@ -13,6 +13,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "absl/types/optional.h"
 #include "api/field_trials_view.h"
 #include "api/transport/network_types.h"
@@ -20,6 +22,7 @@
 #include "api/units/timestamp.h"
 #include "modules/congestion_controller/goog_cc/link_capacity_estimator.h"
 #include "modules/remote_bitrate_estimator/include/bwe_defines.h"
+#include "modules/remote_bitrate_estimator/tradeoff_control.h"
 #include "rtc_base/experiments/field_trial_parser.h"
 
 namespace webrtc {
@@ -63,6 +66,12 @@ class AimdRateControl {
   double GetNearMaxIncreaseRateBpsPerSecond() const;
   // Returns the expected time between overuse signals (assuming steady state).
   TimeDelta GetExpectedBandwidthPeriod() const;
+
+  // TIGAS: WebRTC-Tigas-Mortise, on the send side only.
+  bool MortiseEnabled() const { return mortise_ != nullptr; }
+  // One transport feedback for Mortise: its largest feedback_time - send_time
+  // and the acknowledged bitrate.
+  void UpdateNetworkEstimate(TimeDelta rtt, DataRate throughput);
 
  private:
   enum class RateControlState { kRcHold, kRcIncrease, kRcDecrease };
@@ -109,6 +118,17 @@ class AimdRateControl {
   FieldTrialFlag disable_estimate_bounded_increase_{"Disabled"};
   FieldTrialParameter<bool> use_current_estimate_as_min_upper_bound_{"c_upper",
                                                                      false};
+  // TIGAS: WebRTC-Tigas-AimdIncrease, the scale of the additive increase and
+  // the per-second factor of the multiplicative increase.
+  FieldTrialParameter<double> additive_increase_scale_{"ai", 1.0};
+  FieldTrialParameter<double> multiplicative_increase_factor_{"mi", 1.08};
+  // TIGAS: with WebRTC-Tigas-Mortise, Mortise sets beta_, the
+  // multiplicative increase in place of mi, and a scale of the additive
+  // increase applied before its 4 kbit/s floor, as 8b09a04 does
+  // (tradeoff_control.h).
+  std::unique_ptr<TradeOffControl> mortise_;
+  double mortise_alpha_ = 1.08;
+  double mortise_additive_coef_ = 1.0;
   absl::optional<DataRate> last_decrease_;
 };
 }  // namespace webrtc

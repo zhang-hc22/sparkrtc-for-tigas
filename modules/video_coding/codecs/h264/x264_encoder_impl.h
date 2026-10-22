@@ -131,6 +131,10 @@ EncoderInfo GetEncoderInfo() const override;
   // int i_frame = 0;//frame index
   x264_nal_t *nal_t_;
   x264_param_t param_;
+  // Field trial WebRTC-Tigas-X264KeyFrameFix: a key frame request forces an
+  // IDR (x264 reads i_type, not b_keyframe, on input), the request is cleared
+  // once served, and encoded IDRs are marked kVideoFrameKey.
+  bool keyframe_fix_ = false;
 };
 
 }  // namespace webrtc

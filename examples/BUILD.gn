@@ -1043,6 +1043,64 @@ if (is_linux || is_chromeos || is_win) {
     ]
   }
 
+  # TIGAS sender: frames come from tigas/webrtc/render_worker.py, viewpoints
+  # come from the page over a DataChannel. Reuses the localvideo signaling
+  # client; no GTK or X11.
+  rtc_executable("tigas_sender") {
+    testonly = true
+    sources = [
+      "peerconnection/localvideo/defaults.cc",
+      "peerconnection/localvideo/defaults.h",
+      "peerconnection/localvideo/peer_connection_localvideo.cc",
+      "peerconnection/localvideo/peer_connection_localvideo.h",
+      "tigas/main.cc",
+      "tigas/push_video_source.h",
+      "tigas/render_client.cc",
+      "tigas/render_client.h",
+      "tigas/tigas_sender.cc",
+      "tigas/tigas_sender.h",
+    ]
+    deps = [
+      "../api:create_peerconnection_factory",
+      "../api:libjingle_peerconnection_api",
+      "../api:media_stream_interface",
+      "../api:rtc_stats_api",
+      "../api:scoped_refptr",
+      "../api/audio_codecs:builtin_audio_decoder_factory",
+      "../api/audio_codecs:builtin_audio_encoder_factory",
+      "../api/task_queue:pending_task_safety_flag",
+      "../api/units:time_delta",
+      "../api/video:video_frame",
+      "../api/video:video_rtp_headers",
+      "../api/video_codecs:video_decoder_factory_template",
+      "../api/video_codecs:video_decoder_factory_template_open_h264_adapter",
+      "../api/video_codecs:video_encoder_factory_template",
+      "../api/video_codecs:video_encoder_factory_template_open_h264_adapter",
+      "../media:rtc_audio_video",
+      "../media:rtc_media_base",
+      "../modules/audio_device",
+      "../modules/audio_device:audio_device_impl",
+      "../modules/audio_processing",
+      "../p2p:rtc_p2p",
+      "../pc:libjingle_peerconnection",
+      "../rtc_base:checks",
+      "../rtc_base:logging",
+      "../rtc_base:net_helpers",
+      "../rtc_base:network",
+      "../rtc_base:rtc_json",
+      "../rtc_base:ssl",
+      "../rtc_base:stringutils",
+      "../rtc_base:threading",
+      "../rtc_base:timeutils",
+      "../rtc_base/third_party/sigslot",
+      "../system_wrappers:field_trial",
+      "//third_party/abseil-cpp/absl/flags:flag",
+      "//third_party/abseil-cpp/absl/flags:parse",
+      "//third_party/abseil-cpp/absl/strings",
+      "//third_party/abseil-cpp/absl/types:optional",
+    ]
+  }
+
   rtc_executable("turnserver") {
     testonly = true
     sources = [ "turnserver/turnserver_main.cc" ]
