@@ -60,7 +60,8 @@ ABSL_FLAG(bool,
           false,
           "Enable the MAE repository's codec-3 Salsify baseline: x264 VBV "
           "fixed at 0.04 seconds after SetRates. Independent of MAE and "
-          "Mortise; not with --enable_mae or --mortise.");
+          "Mortise; not with --enable_mae. With --mortise, Mortise sets "
+          "GCC's target and Salsify keeps its VBV.");
 ABSL_FLAG(bool,
           enable_adaptive_frame_drop,
           false,
@@ -287,11 +288,11 @@ int main(int argc, char* argv[]) {
     field_trials += "WebRTC-Tigas-Salsify/Enabled/";
   webrtc::field_trial::InitFieldTrialsFromString(field_trials.c_str());
   if (webrtc::field_trial::IsEnabled("WebRTC-Tigas-Salsify") &&
-      (absl::GetFlag(FLAGS_enable_mae) || !mortise.empty() ||
-       gcc_ai != 1.0 || gcc_mi != 1.08 || !detector_args.empty())) {
+      (absl::GetFlag(FLAGS_enable_mae) || gcc_ai != 1.0 || gcc_mi != 1.08 ||
+       !detector_args.empty())) {
     fprintf(stderr,
-            "Salsify uses its own fixed VBV with baseline GCC; drop MAE, "
-            "Mortise and GCC experiment options\n");
+            "Salsify uses its own fixed VBV with baseline GCC or Mortise; "
+            "drop MAE and GCC experiment options\n");
     return 1;
   }
 
