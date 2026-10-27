@@ -114,8 +114,10 @@ ABSL_FLAG(std::string,
           "(mortise_v1), as --enable_mortise; v2 is v1 with the options "
           "umin_rq:1,probe:0.1,det_overuse_ms:100 (mortise_v2), the same "
           "field trial as --mortise=v1 --mortise_args=... with them; v3 is "
-          "the controller with the structure of Mortise's Copa controller, "
-          "v3:1,umin_rq:1,det_overuse_ms:100 (mortise_v3). Empty: off.");
+          "the controller with the structure of Mortise's Copa controller "
+          "that measures the slope along u, "
+          "v3:1,umin_rq:1,det_overuse_ms:100,v3_est:1 (mortise_v3). "
+          "Empty: off.");
 ABSL_FLAG(std::string,
           mortise_args,
           "",
@@ -262,8 +264,9 @@ int main(int argc, char* argv[]) {
               mortise.c_str());
       return 1;
     }
-    mortise_args = mortise == "v2" ? "umin_rq:1,probe:0.1,det_overuse_ms:100"
-                                   : "v3:1,umin_rq:1,det_overuse_ms:100";
+    mortise_args = mortise == "v2"
+                       ? "umin_rq:1,probe:0.1,det_overuse_ms:100"
+                       : "v3:1,umin_rq:1,det_overuse_ms:100,v3_est:1";
   }
   if (!CheckArgs("mortise_args", mortise_args,
                  {"fixed_u", "umin_rq", "probe", "det_overuse_ms",
