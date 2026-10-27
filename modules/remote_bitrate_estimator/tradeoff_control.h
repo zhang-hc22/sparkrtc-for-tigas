@@ -23,6 +23,15 @@
  *  det_overuse_ms:..,det_window_ms:../. With none
  *  set the controller is mortise_v1, the one of 920865ec29. mortise_v2
  *  (tigas_sender --mortise=v2) is umin_rq:1,probe:0.1,det_overuse_ms:100.
+ *
+ *  v3:1 replaces the rules with the structure of Mortise's Copa controller
+ *  (mortise/utils/calc_opt_delta.py, work/tigas-stability-exp-design.md
+ *  section 3): each period a target u_pref from the slope of B on R over
+ *  the recent periods (coarse: u / 1.78 or u + 0.2; fine: the vertex of a
+ *  quadratic fit of Q on u), then u = sigma u_pref + (1 - sigma) u, and on a
+ *  change point of Copa's online Bayesian detector u = u_pref with the
+ *  history cleared. mortise_v3 (--mortise=v3) is
+ *  v3:1,umin_rq:1,det_overuse_ms:100.
  */
 
 #ifndef MODULES_REMOTE_BITRATE_ESTIMATOR_TRADEOFF_CONTROL_H_
@@ -31,7 +40,10 @@
 #include <stdint.h>
 
 #include <deque>
+#include <limits>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/string_view.h"
 
@@ -58,13 +70,64 @@ struct TradeOffOptions {
   // u = 1, linear in between (DetectorShare).
   double det_overuse_ms = 0.0;
   double det_window_ms = 0.0;
+  // The v3 controller (file comment): v3_hist periods in the slope and the
+  // fit, the weight v3_sigma of u_pref, a step v3_dither after three periods
+  // in which u moved less than 0.02; v3_fine:0 keeps to the coarse target.
+  bool v3 = false;
+  int v3_hist = 6;
+  double v3_sigma = 0.5;
+  double v3_dither = 0.05;
+  bool v3_fine = true;
+  // 0: no u_min of 0.7, 0.8, 0.9 above 1.7, 2.2, 2.5 Mbit/s.
+  bool umin_hr = true;
 
   static TradeOffOptions Parse(absl::string_view trial);
   bool Detector() const { return det_overuse_ms > 0.0 || det_window_ms > 0.0; }
   bool Any() const {
-    return fixed_u >= 0.0 || umin_rq || probe > 0.0 || Detector();
+    return fixed_u >= 0.0 || umin_rq || probe > 0.0 || Detector() || v3 ||
+           !umin_hr;
   }
 };
+
+// Online Bayesian change point detection with a Student-t likelihood and a
+// constant hazard, as mortise/utils/change_point.py (build_detector: hazard
+// 1/250, alpha 0.1, beta 0.01, kappa 1, mu 0, run lengths up to 200).
+class ChangePointDetector {
+ public:
+  ChangePointDetector();
+  // Adds a sample; returns the most likely run length.
+  int AddData(double x);
+
+ private:
+  static constexpr int kHistoryLen = 200;
+  int t0_ = 0;
+  int t_ = -1;
+  std::vector<double> r_;
+  std::vector<double> alpha_, beta_, kappa_, mu_;
+};
+
+// One period of the v3 history: the u in effect, B (bit/s) and R (ms).
+struct TradeOffPoint {
+  double u;
+  int64_t bitrate_bps;
+  int64_t rtt_ms;
+};
+
+// The v3 target of one period, a function of the history (this period
+// last), lambda, u and u_min only, so that it can be recomputed offline.
+struct TradeOffDecision {
+  // coarse_up, coarse_down, fine, hold (no valid slope).
+  const char* mode;
+  double u_pref;
+  // Slope of B (Mbit/s) on R (ms) and its ratio to lambda; nan if invalid.
+  double tau;
+  double ratio;
+};
+TradeOffDecision DecideTradeOff(const std::deque<TradeOffPoint>& history,
+                                double lambda,
+                                double u,
+                                double u_min,
+                                bool fine);
 
 class TradeOffControl {
  public:
@@ -109,6 +172,7 @@ class TradeOffControl {
   // Closes the period at at_time into period, or returns the skip branch.
   const char* ClosePeriod(Timestamp at_time, Period* period);
   bool UpdateFixed(Timestamp at_time);
+  bool UpdateV3(Timestamp at_time);
 
   void Log(const char* branch,
            Timestamp at_time,
@@ -133,6 +197,18 @@ class TradeOffControl {
   std::deque<int64_t> network_tputs_;
   // umin_rq: (end of period, R) of the periods in the last 10 s.
   std::deque<std::pair<Timestamp, int64_t>> period_rtts_;
+
+  // v3: the periods since the last change point (at most v3_hist), periods
+  // in a row with u moving less than 0.02, the detector on the EWMA of the
+  // acknowledged rate (Mbit/s of 2^20 bit, as calc_opt_delta.py) and the
+  // last two run lengths, and whether a change point waits for the period.
+  std::deque<TradeOffPoint> v3_history_;
+  int v3_still_ = 0;
+  ChangePointDetector cp_detector_;
+  double ewma_rate_ = 0.0;
+  int run_len_ = std::numeric_limits<int>::max();
+  int last_run_len_ = std::numeric_limits<int>::max();
+  bool cp_detected_ = false;
 };
 
 }  // namespace webrtc
