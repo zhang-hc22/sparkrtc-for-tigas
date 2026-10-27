@@ -68,10 +68,11 @@ TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
   FieldTrialParameter<double> v3_sigma("v3_sigma", 0.5);
   FieldTrialParameter<double> v3_dither("v3_dither", 0.05);
   FieldTrialParameter<bool> v3_fine("v3_fine", true);
+  FieldTrialParameter<int> v3_est("v3_est", 0);
   FieldTrialParameter<bool> umin_hr("umin_hr", true);
   ParseFieldTrial({&fixed_u, &umin_rq, &probe, &det_overuse_ms,
                    &det_window_ms, &v3, &v3_hist, &v3_sigma, &v3_dither,
-                   &v3_fine, &umin_hr},
+                   &v3_fine, &v3_est, &umin_hr},
                   trial);
   TradeOffOptions options;
   options.fixed_u = std::min(fixed_u.Get(), kMaxTradeOff);
@@ -84,6 +85,7 @@ TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
   options.v3_sigma = std::min(1.0, std::max(0.0, v3_sigma.Get()));
   options.v3_dither = v3_dither.Get();
   options.v3_fine = v3_fine.Get();
+  options.v3_est = v3_est.Get();
   options.umin_hr = umin_hr.Get();
   return options;
 }
@@ -153,11 +155,39 @@ TradeOffDecision DecideTradeOff(const std::deque<TradeOffPoint>& history,
                                 double lambda,
                                 double u,
                                 double u_min,
-                                bool fine) {
+                                bool fine,
+                                int est) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
-  TradeOffDecision d{"hold", u, nan, nan};
+  TradeOffDecision d{"hold", u, nan, nan, nan};
   const double n = static_cast<double>(history.size());
-  if (history.size() >= 2) {
+  if (est == 1 && history.size() >= 2) {
+    double mean_u = 0.0, mean_r = 0.0, mean_b = 0.0;
+    for (const auto& p : history) {
+      mean_u += p.u;
+      mean_r += static_cast<double>(p.rtt_ms);
+      mean_b += static_cast<double>(p.bitrate_bps) / 1e6;
+    }
+    mean_u /= n;
+    mean_r /= n;
+    mean_b /= n;
+    double suu = 0.0, sur = 0.0, sub = 0.0;
+    for (const auto& p : history) {
+      const double du = p.u - mean_u;
+      suu += du * du;
+      sur += du * (static_cast<double>(p.rtt_ms) - mean_r);
+      sub += du * (static_cast<double>(p.bitrate_bps) / 1e6 - mean_b);
+    }
+    // Valid if u has a standard deviation of at least 0.01.
+    if (suu / n >= 1e-4) {
+      const double db = sub / suu, dr = sur / suu;
+      d.dq = db - lambda * dr;
+      // A smaller u should add delay; otherwise there is no slope to compare.
+      if (dr < 0.0) {
+        d.tau = db / dr;
+        d.ratio = lambda > 0.0 ? d.tau / lambda : nan;
+      }
+    }
+  } else if (est == 0 && history.size() >= 2) {
     double mean_r = 0.0, mean_b = 0.0;
     for (const auto& p : history) {
       mean_r += static_cast<double>(p.rtt_ms);
@@ -177,7 +207,7 @@ TradeOffDecision DecideTradeOff(const std::deque<TradeOffPoint>& history,
       d.ratio = lambda > 0.0 ? d.tau / lambda : nan;
     }
   }
-  if (!std::isnan(d.tau)) {
+  if (!std::isnan(d.tau) || !std::isnan(d.dq)) {
     bool fitted = false;
     if (fine && d.ratio > 0.5 && d.ratio < 2.0) {
       // Q = B - lambda R on z = (u_i - u) / 0.1, least squares a z^2 + b z
@@ -236,8 +266,9 @@ TradeOffDecision DecideTradeOff(const std::deque<TradeOffPoint>& history,
       }
     }
     if (!fitted) {
-      // A steeper slope than lambda: more bitrate per ms is worth it.
-      const bool down = d.tau > lambda;
+      // A steeper slope than lambda: more bitrate per ms is worth it. Along
+      // u: Q rises as u falls.
+      const bool down = est == 1 ? d.dq < 0.0 : d.tau > lambda;
       d.mode = down ? "coarse_down" : "coarse_up";
       d.u_pref = down ? u / kStepDown : u + kStepUp;
     }
@@ -491,7 +522,8 @@ bool TradeOffControl::UpdateV3(Timestamp at_time) {
   while (static_cast<int>(v3_history_.size()) > options_.v3_hist)
     v3_history_.pop_front();
   const TradeOffDecision d = DecideTradeOff(v3_history_, qoe_lambda_,
-                                            u_before, u_min, options_.v3_fine);
+                                            u_before, u_min, options_.v3_fine,
+                                            options_.v3_est);
 
   // The snapshot of the decision, for the offline replay.
   rtc::StringBuilder sb;
@@ -499,7 +531,7 @@ bool TradeOffControl::UpdateV3(Timestamp at_time) {
      << " lambda=" << Num(qoe_lambda_) << " u=" << Num(u_before)
      << " u_min=" << Num(u_min) << " cp=" << (cp_detected_ ? 1 : 0)
      << " mode=" << d.mode << " u_pref=" << Num(d.u_pref)
-     << " tau=" << Num(d.tau) << " hist_u=";
+     << " tau=" << Num(d.tau) << " dq=" << Num(d.dq) << " hist_u=";
   for (size_t i = 0; i < v3_history_.size(); ++i)
     sb << (i ? ";" : "") << Num(v3_history_[i].u);
   sb << " hist_b=";

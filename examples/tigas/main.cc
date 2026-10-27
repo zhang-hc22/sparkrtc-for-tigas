@@ -123,7 +123,7 @@ ABSL_FLAG(std::string,
           "fixed_u (0 to 1), umin_rq (0 or 1), probe (a step of u), "
           "det_overuse_ms and det_window_ms (GCC's overuse detector for "
           "u <= 0.8, its default at u = 1), v3 (0 or 1), v3_hist, v3_sigma, "
-          "v3_dither, v3_fine (0 or 1) and umin_hr (0 or 1) "
+          "v3_dither, v3_fine (0 or 1), v3_est (0 or 1) and umin_hr (0 or 1) "
           "(modules/remote_bitrate_estimator/tradeoff_control.h): the field "
           "trial becomes WebRTC-Tigas-Mortise/Enabled,ARGS/.");
 ABSL_FLAG(std::string,
@@ -268,7 +268,7 @@ int main(int argc, char* argv[]) {
   if (!CheckArgs("mortise_args", mortise_args,
                  {"fixed_u", "umin_rq", "probe", "det_overuse_ms",
                   "det_window_ms", "v3", "v3_hist", "v3_sigma", "v3_dither",
-                  "v3_fine", "umin_hr"},
+                  "v3_fine", "v3_est", "umin_hr"},
                  {"umin_rq", "v3", "v3_fine", "umin_hr"}))
     return 1;
   if (!mortise.empty()) {

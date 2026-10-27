@@ -78,6 +78,11 @@ struct TradeOffOptions {
   double v3_sigma = 0.5;
   double v3_dither = 0.05;
   bool v3_fine = true;
+  // How the slope is measured: 0 regresses B on R; 1 measures it along u,
+  // (dB/du) / (dR/du) with both slopes regressed on u, and takes the coarse
+  // direction from the sign of dQ/du, so that changes of the link, which
+  // move B and R whatever u is, do not bias it.
+  int v3_est = 0;
   // 0: no u_min of 0.7, 0.8, 0.9 above 1.7, 2.2, 2.5 Mbit/s.
   bool umin_hr = true;
 
@@ -122,12 +127,15 @@ struct TradeOffDecision {
   // Slope of B (Mbit/s) on R (ms) and its ratio to lambda; nan if invalid.
   double tau;
   double ratio;
+  // v3_est 1: dQ/du; nan if invalid.
+  double dq;
 };
 TradeOffDecision DecideTradeOff(const std::deque<TradeOffPoint>& history,
                                 double lambda,
                                 double u,
                                 double u_min,
-                                bool fine);
+                                bool fine,
+                                int est);
 
 class TradeOffControl {
  public:
