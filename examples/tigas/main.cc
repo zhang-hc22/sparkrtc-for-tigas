@@ -116,8 +116,9 @@ ABSL_FLAG(std::string,
           "field trial as --mortise=v1 --mortise_args=... with them; v3 is "
           "the controller with the structure of Mortise's Copa controller "
           "that measures the slope along u, "
-          "v3:1,umin_rq:1,det_overuse_ms:100,v3_est:1 (mortise_v3). "
-          "Empty: off.");
+          "v3:1,umin_rq:1,det_overuse_ms:100,v3_est:1 (mortise_v3); v4 "
+          "keeps v3's structure and takes the slope from a model of GCC, "
+          "v4:1,det_overuse_ms:100 (mortise_v4). Empty: off.");
 ABSL_FLAG(std::string,
           mortise_args,
           "",
@@ -125,7 +126,9 @@ ABSL_FLAG(std::string,
           "fixed_u (0 to 1), umin_rq (0 or 1), probe (a step of u), "
           "det_overuse_ms and det_window_ms (GCC's overuse detector for "
           "u <= 0.8, its default at u = 1), v3 (0 or 1), v3_hist, v3_sigma, "
-          "v3_dither, v3_fine (0 or 1), v3_est (0 or 1) and umin_hr (0 or 1) "
+          "v3_dither, v3_fine (0 or 1), v3_est (0 or 1), umin_hr (0 or 1), "
+          "v4 (0 or 1), v4_hist, v4_umin, v4_umax and v4_sigma (v4's periods "
+          "in the model, bounds of u and weight of the target) "
           "(modules/remote_bitrate_estimator/tradeoff_control.h): the field "
           "trial becomes WebRTC-Tigas-Mortise/Enabled,ARGS/.");
 ABSL_FLAG(std::string,
@@ -247,7 +250,7 @@ int main(int argc, char* argv[]) {
     mortise = "v1";
   }
   if (!mortise.empty() && mortise != "v1" && mortise != "v2" &&
-      mortise != "v3") {
+      mortise != "v3" && mortise != "v4") {
     fprintf(stderr, "--mortise: unknown version '%s'\n", mortise.c_str());
     return 1;
   }
@@ -256,7 +259,7 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "--mortise_args needs --mortise\n");
     return 1;
   }
-  if (mortise == "v2" || mortise == "v3") {
+  if (mortise == "v2" || mortise == "v3" || mortise == "v4") {
     if (!mortise_args.empty()) {
       fprintf(stderr,
               "--mortise=%s has its options; for others use --mortise=v1 "
@@ -264,15 +267,16 @@ int main(int argc, char* argv[]) {
               mortise.c_str());
       return 1;
     }
-    mortise_args = mortise == "v2"
-                       ? "umin_rq:1,probe:0.1,det_overuse_ms:100"
-                       : "v3:1,umin_rq:1,det_overuse_ms:100,v3_est:1";
+    mortise_args = mortise == "v2"   ? "umin_rq:1,probe:0.1,det_overuse_ms:100"
+                   : mortise == "v3" ? "v3:1,umin_rq:1,det_overuse_ms:100,v3_est:1"
+                                     : "v4:1,det_overuse_ms:100";
   }
   if (!CheckArgs("mortise_args", mortise_args,
                  {"fixed_u", "umin_rq", "probe", "det_overuse_ms",
                   "det_window_ms", "v3", "v3_hist", "v3_sigma", "v3_dither",
-                  "v3_fine", "v3_est", "umin_hr"},
-                 {"umin_rq", "v3", "v3_fine", "umin_hr"}))
+                  "v3_fine", "v3_est", "umin_hr", "v4", "v4_hist", "v4_umin",
+                  "v4_umax", "v4_sigma"},
+                 {"umin_rq", "v3", "v3_fine", "umin_hr", "v4"}))
     return 1;
   if (!mortise.empty()) {
     if (gcc_ai != 1.0 || gcc_mi != 1.08) {
