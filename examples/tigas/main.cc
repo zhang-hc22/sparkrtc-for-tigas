@@ -127,8 +127,10 @@ ABSL_FLAG(std::string,
           "det_overuse_ms and det_window_ms (GCC's overuse detector for "
           "u <= 0.8, its default at u = 1), v3 (0 or 1), v3_hist, v3_sigma, "
           "v3_dither, v3_fine (0 or 1), v3_est (0 or 1), umin_hr (0 or 1), "
-          "v4 (0 or 1), v4_hist, v4_umin, v4_umax and v4_sigma (v4's periods "
-          "in the model, bounds of u and weight of the target) "
+          "v4 (0 or 1), v4_hist, v4_umin, v4_umax, v4_sigma, v4_hold (0 or 1), "
+          "v4_wait and v4_median (0 or 1) (v4's periods in the model, bounds "
+          "of u, weight of the target, no fall at a new low of R, periods "
+          "without a fall after one, the median queue) "
           "(modules/remote_bitrate_estimator/tradeoff_control.h): the field "
           "trial becomes WebRTC-Tigas-Mortise/Enabled,ARGS/.");
 ABSL_FLAG(std::string,
@@ -275,8 +277,9 @@ int main(int argc, char* argv[]) {
                  {"fixed_u", "umin_rq", "probe", "det_overuse_ms",
                   "det_window_ms", "v3", "v3_hist", "v3_sigma", "v3_dither",
                   "v3_fine", "v3_est", "umin_hr", "v4", "v4_hist", "v4_umin",
-                  "v4_umax", "v4_sigma"},
-                 {"umin_rq", "v3", "v3_fine", "umin_hr", "v4"}))
+                  "v4_umax", "v4_sigma", "v4_hold", "v4_wait", "v4_median"},
+                 {"umin_rq", "v3", "v3_fine", "umin_hr", "v4", "v4_hold",
+                  "v4_median"}))
     return 1;
   if (!mortise.empty()) {
     if (gcc_ai != 1.0 || gcc_mi != 1.08) {

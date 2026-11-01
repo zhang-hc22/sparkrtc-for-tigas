@@ -103,10 +103,13 @@ TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
   FieldTrialParameter<double> v4_umin("v4_umin", 0.1);
   FieldTrialParameter<double> v4_umax("v4_umax", 0.8);
   FieldTrialParameter<double> v4_sigma("v4_sigma", 0.5);
+  FieldTrialParameter<bool> v4_hold("v4_hold", true);
+  FieldTrialParameter<int> v4_wait("v4_wait", 1);
+  FieldTrialParameter<bool> v4_median("v4_median", false);
   ParseFieldTrial({&fixed_u, &umin_rq, &probe, &det_overuse_ms,
                    &det_window_ms, &v3, &v3_hist, &v3_sigma, &v3_dither,
                    &v3_fine, &v3_est, &umin_hr, &v4, &v4_hist, &v4_umin,
-                   &v4_umax, &v4_sigma},
+                   &v4_umax, &v4_sigma, &v4_hold, &v4_wait, &v4_median},
                   trial);
   TradeOffOptions options;
   options.fixed_u = std::min(fixed_u.Get(), kMaxTradeOff);
@@ -126,6 +129,9 @@ TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
   options.v4_umax = std::min(kMaxTradeOff, std::max(0.0, v4_umax.Get()));
   options.v4_umin = std::min(options.v4_umax, std::max(0.0, v4_umin.Get()));
   options.v4_sigma = std::min(1.0, std::max(0.0, v4_sigma.Get()));
+  options.v4_hold = v4_hold.Get();
+  options.v4_wait = std::max(0, v4_wait.Get());
+  options.v4_median = v4_median.Get();
   return options;
 }
 
@@ -320,14 +326,27 @@ TradeOffDecisionV4 DecideTradeOffV4(
     const std::deque<TradeOffSampleV4>& history,
     double u,
     double u_lo,
-    double u_hi) {
+    double u_hi,
+    bool median) {
   TradeOffDecisionV4 d{"coarse_up", u, 0.0, 0.0, 1.0};
-  // The queue that stayed over the last periods, moved to u = 0.
-  double q0 = std::numeric_limits<double>::infinity();
+  // The queue that stayed over the last periods, moved to u = 0; new lows
+  // left out unless all are.
   const size_t first =
       history.size() > kStandPeriods ? history.size() - kStandPeriods : 0;
-  for (size_t i = first; i < history.size(); ++i)
-    q0 = std::min(q0, history[i].q_ms * std::exp(-Cubic(kPhi, history[i].u)));
+  std::vector<double> qs, all;
+  for (size_t i = first; i < history.size(); ++i) {
+    const double x = history[i].q_ms * std::exp(-Cubic(kPhi, history[i].u));
+    all.push_back(x);
+    if (!history[i].low)
+      qs.push_back(x);
+  }
+  if (qs.empty())
+    qs = all;
+  std::sort(qs.begin(), qs.end());
+  const size_t n_qs = qs.size();
+  const double q0 = !median        ? qs.front()
+                    : n_qs % 2 == 1 ? qs[n_qs / 2]
+                                    : 0.5 * (qs[n_qs / 2 - 1] + qs[n_qs / 2]);
   d.q_stand = q0 * std::exp(Cubic(kPhi, history.back().u));
   d.w = std::exp(-d.q_stand / kQueueScaleMs);
   const double share = kEtaShareMin + (1.0 - kEtaShareMin) * d.w;
@@ -684,20 +703,25 @@ bool TradeOffControl::UpdateV4(Timestamp at_time) {
   }
   // The u_min floors do not apply; the log shows v4's lower bound.
   period.min_delta = options_.v4_umin;
-  v4_rtts_.emplace_back(at_time, period.rtt_ms);
-  while (at_time - v4_rtts_.front().first >= kRttBaseWindow)
+  while (!v4_rtts_.empty() &&
+         at_time - v4_rtts_.front().first >= kRttBaseWindow)
     v4_rtts_.pop_front();
+  bool low = true;
+  for (const auto& p : v4_rtts_)
+    low = low && period.rtt_ms < p.second;
+  v4_rtts_.emplace_back(at_time, period.rtt_ms);
   int64_t rtt_base = period.rtt_ms;
   for (const auto& p : v4_rtts_)
     rtt_base = std::min(rtt_base, p.second);
   // GCC follows u with a lag of about a period.
   const double u_eff = 0.5 * (last_trade_off_ + u_before);
   v4_history_.push_back({u_eff, period.bitrate_bps, period.tput_bps,
-                         static_cast<double>(period.rtt_ms - rtt_base)});
+                         static_cast<double>(period.rtt_ms - rtt_base), low});
   while (static_cast<int>(v4_history_.size()) > options_.v4_hist)
     v4_history_.pop_front();
-  const TradeOffDecisionV4 d = DecideTradeOffV4(
-      v4_history_, u_before, options_.v4_umin, options_.v4_umax);
+  const TradeOffDecisionV4 d =
+      DecideTradeOffV4(v4_history_, u_before, options_.v4_umin,
+                       options_.v4_umax, options_.v4_median);
 
   // The snapshot of the decision, for the offline replay.
   rtc::StringBuilder sb;
@@ -705,7 +729,8 @@ bool TradeOffControl::UpdateV4(Timestamp at_time) {
      << " cp=" << (cp_detected_ ? 1 : 0) << " mode=" << d.mode
      << " u_pref=" << Num(d.u_pref) << " ratio=" << Num(d.ratio)
      << " q_stand=" << Num(d.q_stand) << " w=" << Num(d.w)
-     << " rtt_base=" << rtt_base << " hist_u=";
+     << " rtt_base=" << rtt_base << " low=" << (low ? 1 : 0)
+     << " since_fall=" << std::min(v4_since_fall_, 9999) << " hist_u=";
   for (size_t i = 0; i < v4_history_.size(); ++i)
     sb << (i ? ";" : "") << Num(v4_history_[i].u);
   sb << " hist_b=";
@@ -717,6 +742,9 @@ bool TradeOffControl::UpdateV4(Timestamp at_time) {
   sb << " hist_q=";
   for (size_t i = 0; i < v4_history_.size(); ++i)
     sb << (i ? ";" : "") << Num(v4_history_[i].q_ms);
+  sb << " hist_low=";
+  for (size_t i = 0; i < v4_history_.size(); ++i)
+    sb << (i ? ";" : "") << (v4_history_[i].low ? 1 : 0);
   RTC_LOG(LS_INFO) << sb.str();
 
   last_trade_off_ = cur_trade_off_;
@@ -732,8 +760,19 @@ bool TradeOffControl::UpdateV4(Timestamp at_time) {
   } else {
     u = options_.v4_sigma * d.u_pref + (1.0 - options_.v4_sigma) * u_before;
     branch = std::string("v4_") + d.mode;
+    // The queue of a lower u shows only in a period or two, and a falling
+    // least R hides it.
+    if (u < u_before && ((options_.v4_hold && low) ||
+                         v4_since_fall_ < options_.v4_wait)) {
+      u = u_before;
+      branch = "v4_hold";
+    }
   }
   cur_trade_off_ = std::min(options_.v4_umax, std::max(options_.v4_umin, u));
+  if (cur_trade_off_ < u_before)
+    v4_since_fall_ = 0;
+  else if (v4_since_fall_ < std::numeric_limits<int>::max())
+    ++v4_since_fall_;
   Log(branch.c_str(), at_time, u_before, &period);
   return cur_trade_off_ != u_before;
 }

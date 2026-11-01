@@ -37,6 +37,10 @@
  *  point) but takes the slope from a model of GCC under Mortise instead of a
  *  fit over the recent periods (DecideTradeOffV4), so that it decides from
  *  one period on. mortise_v4 (--mortise=v4) is v4:1,det_overuse_ms:100.
+ *  Lowering u builds a queue within 1-2 s, raising it drains the queue in
+ *  about 10 s; so u does not fall in a period whose R is a new 60-s low (q
+ *  is measured against a least R that is still falling) nor, by default,
+ *  in the period right after a fall.
  */
 
 #ifndef MODULES_REMOTE_BITRATE_ESTIMATOR_TRADEOFF_CONTROL_H_
@@ -92,12 +96,19 @@ struct TradeOffOptions {
   bool umin_hr = true;
   // The v4 controller (file comment): v4_hist periods since the last change
   // point in the model, u within [v4_umin, v4_umax], the weight v4_sigma of
-  // u_pref. The u_min floors above do not apply.
+  // u_pref. The u_min floors above do not apply. Not at a change point, u
+  // does not fall in a period whose R is below the least R of the 60 s
+  // before it (v4_hold) nor within v4_wait periods after a fall; v4_median
+  // takes the standing queue as the median instead of the least of the last
+  // 3 periods.
   bool v4 = false;
   int v4_hist = 5;
   double v4_umin = 0.1;
   double v4_umax = 0.8;
   double v4_sigma = 0.5;
+  bool v4_hold = true;
+  int v4_wait = 1;
+  bool v4_median = false;
 
   static TradeOffOptions Parse(absl::string_view trial);
   bool Detector() const { return det_overuse_ms > 0.0 || det_window_ms > 0.0; }
@@ -151,12 +162,14 @@ TradeOffDecision DecideTradeOff(const std::deque<TradeOffPoint>& history,
                                 int est);
 
 // One period of the v4 history: the u in effect, B and the acknowledged rate
-// (bit/s), and q = R - (the least R of the periods in the last 60 s) in ms.
+// (bit/s), q = R - (the least R of the periods in the last 60 s) in ms, and
+// whether R was below the least R of the 60 s before it (a new low).
 struct TradeOffSampleV4 {
   double u;
   int64_t bitrate_bps;
   int64_t tput_bps;
   double q_ms;
+  bool low;
 };
 
 // The v4 target of one period, as tigas/exp/mortise_v4.py decide. The model
@@ -165,7 +178,8 @@ struct TradeOffSampleV4 {
 // have had the rate B_i eta(u) / eta(u_i) and the queue q_i phi(u) /
 // phi(u_i), and the frame latency moves by psi(u) on top. The QoE of u is
 // J(u) = 0.5 mean_i VMAF(B_i(u)) - 0.1 (psi(u) + q_s phi(u)), where q_s is
-// the least q_i / phi(u_i) of the last 3 periods (a queue that stays).
+// the least (median: the median) q_i / phi(u_i) of the last 3 periods that
+// are not new lows, of all 3 if they all are (a queue that stays).
 // While a queue stays the link is full: B_i(u) moves by only part of eta
 // (0.3 + 0.7 w) and is capped at the acknowledged rate times (1 + 0.5 w),
 // w = exp(-q_s phi(u_now) / 15 ms). ratio = the VMAF gain over the latency
@@ -185,7 +199,8 @@ TradeOffDecisionV4 DecideTradeOffV4(
     const std::deque<TradeOffSampleV4>& history,
     double u,
     double u_lo,
-    double u_hi);
+    double u_hi,
+    bool median);
 
 class TradeOffControl {
  public:
@@ -268,10 +283,12 @@ class TradeOffControl {
   int run_len_ = std::numeric_limits<int>::max();
   int last_run_len_ = std::numeric_limits<int>::max();
   bool cp_detected_ = false;
-  // v4: the periods since the last change point (at most v4_hist) and
-  // (end of period, R) of the periods in the last 60 s.
+  // v4: the periods since the last change point (at most v4_hist),
+  // (end of period, R) of the periods in the last 60 s and the periods since
+  // u last fell.
   std::deque<TradeOffSampleV4> v4_history_;
   std::deque<std::pair<Timestamp, int64_t>> v4_rtts_;
+  int v4_since_fall_ = std::numeric_limits<int>::max();
 };
 
 }  // namespace webrtc
