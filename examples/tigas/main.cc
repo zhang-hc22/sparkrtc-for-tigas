@@ -56,6 +56,13 @@ ABSL_FLAG(int,
 // here; the localvideo example turns it on.
 ABSL_FLAG(bool, enable_mae, false, "Enable the More Adaptive Encoder.");
 ABSL_FLAG(bool,
+          enable_salsify,
+          false,
+          "Enable the MAE repository's codec-3 Salsify baseline: x264 VBV "
+          "fixed at 0.04 seconds after SetRates. Independent of MAE and "
+          "Mortise; not with --enable_mae. With --mortise, Mortise sets "
+          "GCC's target and Salsify keeps its VBV.");
+ABSL_FLAG(bool,
           enable_adaptive_frame_drop,
           false,
           "Re-enable frame dropping under sustained congestion or encoder "
@@ -189,7 +196,8 @@ bool WriteInfo(const std::string& dir,
           "\"disable_frame_drop\":%s,\"field_trials\":\"%s\","
           "\"candidate_prefix\":\"%s\",\"stats_interval_ms\":%d,"
           "\"push_fps\":%d,\"enable_mortise\":%s,\"mortise\":\"%s\","
-          "\"mortise_args\":\"%s\",\"gcc_detector_args\":\"%s\"}\n",
+          "\"mortise_args\":\"%s\",\"gcc_detector_args\":\"%s\","
+          "\"enable_salsify\":%s}\n",
           rtc::GetEnableMAE() ? "true" : "false",
           rtc::GetEnableAdaptiveFrameDrop() ? "true" : "false",
           rtc::GetDisableFrameDrop() ? "true" : "false",
@@ -199,7 +207,9 @@ bool WriteInfo(const std::string& dir,
           absl::GetFlag(FLAGS_push_fps), mortise.empty() ? "false" : "true",
           JsonEscape(mortise).c_str(),
           JsonEscape(absl::GetFlag(FLAGS_mortise_args)).c_str(),
-          JsonEscape(absl::GetFlag(FLAGS_gcc_detector_args)).c_str());
+          JsonEscape(absl::GetFlag(FLAGS_gcc_detector_args)).c_str(),
+          webrtc::field_trial::IsEnabled("WebRTC-Tigas-Salsify") ? "true"
+                                                              : "false");
   fclose(f);
   return true;
 }
@@ -274,7 +284,17 @@ int main(int argc, char* argv[]) {
     return 1;
   if (!detector_args.empty())
     field_trials += "WebRTC-Tigas-Detector/" + detector_args + "/";
+  if (absl::GetFlag(FLAGS_enable_salsify))
+    field_trials += "WebRTC-Tigas-Salsify/Enabled/";
   webrtc::field_trial::InitFieldTrialsFromString(field_trials.c_str());
+  if (webrtc::field_trial::IsEnabled("WebRTC-Tigas-Salsify") &&
+      (absl::GetFlag(FLAGS_enable_mae) || gcc_ai != 1.0 || gcc_mi != 1.08 ||
+       !detector_args.empty())) {
+    fprintf(stderr,
+            "Salsify uses its own fixed VBV with baseline GCC or Mortise; "
+            "drop MAE and GCC experiment options\n");
+    return 1;
+  }
 
   rtc::SetEnableMAE(absl::GetFlag(FLAGS_enable_mae));
   rtc::SetEnableAdaptiveFrameDrop(

@@ -529,6 +529,15 @@ void H264EncoderImpl::SetRates(const RateControlParameters& parameters) {
                    << vbv_ratio << " new vbv_buffer_size " << param_.rc.i_vbv_buffer_size;
       }
 
+      // Independent codec-3 mode from MAE 1c5866f08c. Keep the MAE logic
+      // above unchanged. The sender rejects enabling both modes together.
+      if (field_trial::IsEnabled("WebRTC-Tigas-Salsify")) {
+        param_.rc.i_vbv_buffer_size = bitrate_kbps * 0.04;
+        RTC_LOG(LS_INFO) << "H264EncoderImpl::SetRates() Salsify vbv_ratio "
+                        << 0.04 << " new vbv_buffer_size "
+                        << param_.rc.i_vbv_buffer_size;
+      }
+
       RTC_LOG(LS_INFO) << "H264EncoderImpl::SetRates() "
                  << "target_bps: " << param_.rc.i_bitrate
                  << " max_bitrate: " << param_.rc.i_vbv_max_bitrate
