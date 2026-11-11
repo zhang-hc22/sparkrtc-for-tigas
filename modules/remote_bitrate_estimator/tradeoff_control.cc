@@ -32,6 +32,24 @@ constexpr double kAlpha0 = 0.1;
 constexpr double kBeta0 = 0.01;
 constexpr double kKappa0 = 1.0;
 constexpr double kMu0 = 0.0;
+// v4: the model (tradeoff_control.h DecideTradeOffV4, tigas/exp/mortise_v4.py):
+// ln eta(u), ln phi(u) and psi(u) (ms) as a u + b u^2 + c u^3, VMAF of the
+// rate, the queue scale of w, the least share of eta and the headroom over
+// the acknowledged rate, the periods of the standing queue, the half width
+// of the slope, the grid of the fine target and the window of the least R.
+constexpr double kEta[3] = {-0.9734, 1.2983, -1.4818};
+constexpr double kPhi[3] = {-2.0068, 1.6873, -1.97};
+constexpr double kPsi[3] = {-2.47, -137.81, 92.02};
+constexpr double kVmafMax = 99.912;
+constexpr double kVmafScale = 0.606;
+constexpr double kVmafShape = 1.558;
+constexpr double kQueueScaleMs = 15.0;
+constexpr double kEtaShareMin = 0.3;
+constexpr double kHeadroom = 0.5;
+constexpr size_t kStandPeriods = 3;
+constexpr double kSlopeHalf = 0.05;
+constexpr double kGrid = 0.01;
+constexpr TimeDelta kRttBaseWindow = TimeDelta::Seconds(60);
 
 // The density of the Student-t distribution, as scipy.stats.t.pdf.
 double StudentTPdf(double x, double df, double loc, double scale) {
@@ -39,6 +57,16 @@ double StudentTPdf(double x, double df, double loc, double scale) {
   return std::exp(std::lgamma((df + 1.0) / 2.0) - std::lgamma(df / 2.0)) /
          (std::sqrt(df * M_PI) * scale) *
          std::pow(1.0 + z * z / df, -(df + 1.0) / 2.0);
+}
+
+double Cubic(const double (&c)[3], double u) {
+  return u * (c[0] + u * (c[1] + u * c[2]));
+}
+
+double Vmaf(double b_mbps) {
+  return kVmafMax *
+         (1.0 - std::exp(-std::pow(std::max(b_mbps, 0.0) / kVmafScale,
+                                   kVmafShape)));
 }
 
 // Prints a double so that the offline replay reads it back exactly enough.
@@ -70,9 +98,18 @@ TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
   FieldTrialParameter<bool> v3_fine("v3_fine", true);
   FieldTrialParameter<int> v3_est("v3_est", 0);
   FieldTrialParameter<bool> umin_hr("umin_hr", true);
+  FieldTrialParameter<bool> v4("v4", false);
+  FieldTrialParameter<int> v4_hist("v4_hist", 5);
+  FieldTrialParameter<double> v4_umin("v4_umin", 0.1);
+  FieldTrialParameter<double> v4_umax("v4_umax", 0.8);
+  FieldTrialParameter<double> v4_sigma("v4_sigma", 0.5);
+  FieldTrialParameter<bool> v4_hold("v4_hold", true);
+  FieldTrialParameter<int> v4_wait("v4_wait", 1);
+  FieldTrialParameter<bool> v4_median("v4_median", false);
   ParseFieldTrial({&fixed_u, &umin_rq, &probe, &det_overuse_ms,
                    &det_window_ms, &v3, &v3_hist, &v3_sigma, &v3_dither,
-                   &v3_fine, &v3_est, &umin_hr},
+                   &v3_fine, &v3_est, &umin_hr, &v4, &v4_hist, &v4_umin,
+                   &v4_umax, &v4_sigma, &v4_hold, &v4_wait, &v4_median},
                   trial);
   TradeOffOptions options;
   options.fixed_u = std::min(fixed_u.Get(), kMaxTradeOff);
@@ -87,6 +124,14 @@ TradeOffOptions TradeOffOptions::Parse(absl::string_view trial) {
   options.v3_fine = v3_fine.Get();
   options.v3_est = v3_est.Get();
   options.umin_hr = umin_hr.Get();
+  options.v4 = v4.Get();
+  options.v4_hist = std::max(1, v4_hist.Get());
+  options.v4_umax = std::min(kMaxTradeOff, std::max(0.0, v4_umax.Get()));
+  options.v4_umin = std::min(options.v4_umax, std::max(0.0, v4_umin.Get()));
+  options.v4_sigma = std::min(1.0, std::max(0.0, v4_sigma.Get()));
+  options.v4_hold = v4_hold.Get();
+  options.v4_wait = std::max(0, v4_wait.Get());
+  options.v4_median = v4_median.Get();
   return options;
 }
 
@@ -277,6 +322,78 @@ TradeOffDecision DecideTradeOff(const std::deque<TradeOffPoint>& history,
   return d;
 }
 
+TradeOffDecisionV4 DecideTradeOffV4(
+    const std::deque<TradeOffSampleV4>& history,
+    double u,
+    double u_lo,
+    double u_hi,
+    bool median) {
+  TradeOffDecisionV4 d{"coarse_up", u, 0.0, 0.0, 1.0};
+  // The queue that stayed over the last periods, moved to u = 0; new lows
+  // left out unless all are.
+  const size_t first =
+      history.size() > kStandPeriods ? history.size() - kStandPeriods : 0;
+  std::vector<double> qs, all;
+  for (size_t i = first; i < history.size(); ++i) {
+    const double x = history[i].q_ms * std::exp(-Cubic(kPhi, history[i].u));
+    all.push_back(x);
+    if (!history[i].low)
+      qs.push_back(x);
+  }
+  if (qs.empty())
+    qs = all;
+  std::sort(qs.begin(), qs.end());
+  const size_t n_qs = qs.size();
+  const double q0 = !median        ? qs.front()
+                    : n_qs % 2 == 1 ? qs[n_qs / 2]
+                                    : 0.5 * (qs[n_qs / 2 - 1] + qs[n_qs / 2]);
+  d.q_stand = q0 * std::exp(Cubic(kPhi, history.back().u));
+  d.w = std::exp(-d.q_stand / kQueueScaleMs);
+  const double share = kEtaShareMin + (1.0 - kEtaShareMin) * d.w;
+  const double cap = 1.0 + kHeadroom * d.w;
+  auto rate_part = [&](double x) {
+    const double e = Cubic(kEta, x);
+    double sum = 0.0;
+    for (const auto& p : history) {
+      const double b = std::min(
+          static_cast<double>(p.bitrate_bps) *
+              std::exp((e - Cubic(kEta, p.u)) * share),
+          static_cast<double>(p.tput_bps) * cap);
+      sum += Vmaf(b / 1e6);
+    }
+    return sum / static_cast<double>(history.size());
+  };
+  auto latency = [&](double x) {
+    return Cubic(kPsi, x) + q0 * std::exp(Cubic(kPhi, x));
+  };
+  const double a = std::max(u_lo, u - kSlopeHalf);
+  const double b = std::min(u_hi, u + kSlopeHalf);
+  const double gain = 0.5 * (rate_part(a) - rate_part(b));
+  const double cost = 0.1 * (latency(a) - latency(b));
+  d.ratio = cost > 1e-9 ? gain / cost : std::numeric_limits<double>::infinity();
+  if (d.ratio > 0.5 && d.ratio < 2.0) {
+    double best = -std::numeric_limits<double>::infinity();
+    const int n = static_cast<int>(std::lround((u_hi - u_lo) / kGrid));
+    for (int j = 0; j <= n; ++j) {
+      const double x = u_lo + kGrid * j;
+      const double v = 0.5 * rate_part(x) - 0.1 * latency(x);
+      if (v > best) {
+        best = v;
+        d.u_pref = x;
+      }
+    }
+    d.mode = "fine";
+  } else if (d.ratio >= 2.0) {
+    d.mode = "coarse_down";
+    d.u_pref = u / kStepDown;
+  } else {
+    d.mode = "coarse_up";
+    d.u_pref = u + kStepUp;
+  }
+  d.u_pref = std::min(u_hi, std::max(u_lo, d.u_pref));
+  return d;
+}
+
 TradeOffControl::TradeOffControl(const TradeOffOptions& options)
     : options_(options),
       tradeoff_state_(TradeoffProbingState::kProbing),
@@ -295,7 +412,7 @@ void TradeOffControl::UpdateTradeOffEstimate(TimeDelta rtt,
     return;
   network_rtts_.push_back(rtt.ms());
   network_tputs_.push_back(throughput.bps());
-  if (options_.v3) {
+  if (options_.v3 || options_.v4) {
     // calc_opt_delta.py check_change_point, on the EWMA (weight 0.2) of the
     // acknowledged rate of each feedback.
     ewma_rate_ = 0.8 * ewma_rate_ +
@@ -418,6 +535,8 @@ bool TradeOffControl::UpdateFixed(Timestamp at_time) {
 bool TradeOffControl::UpdateTradeoff(Timestamp at_time) {
   if (options_.fixed_u >= 0.0)
     return UpdateFixed(at_time);
+  if (options_.v4)
+    return UpdateV4(at_time);
   if (options_.v3)
     return UpdateV3(at_time);
   const double u_before = cur_trade_off_;
@@ -568,6 +687,94 @@ bool TradeOffControl::UpdateV3(Timestamp at_time) {
   cur_trade_off_ = u;
   Log(branch.c_str(), at_time, u_before, &period);
   return u != u_before;
+}
+
+bool TradeOffControl::UpdateV4(Timestamp at_time) {
+  const double u_before = cur_trade_off_;
+  if (time_last_change_tradeoff_.IsMinusInfinity())
+    time_last_change_tradeoff_ = at_time;
+  if (at_time.ms() - time_last_change_tradeoff_.ms() < kPeriodMs)
+    return false;
+  time_last_change_tradeoff_ = at_time;
+  Period period;
+  if (const char* skip = ClosePeriod(at_time, &period)) {
+    Log(skip, at_time, u_before, nullptr);
+    return false;
+  }
+  // The u_min floors do not apply; the log shows v4's lower bound.
+  period.min_delta = options_.v4_umin;
+  while (!v4_rtts_.empty() &&
+         at_time - v4_rtts_.front().first >= kRttBaseWindow)
+    v4_rtts_.pop_front();
+  bool low = true;
+  for (const auto& p : v4_rtts_)
+    low = low && period.rtt_ms < p.second;
+  v4_rtts_.emplace_back(at_time, period.rtt_ms);
+  int64_t rtt_base = period.rtt_ms;
+  for (const auto& p : v4_rtts_)
+    rtt_base = std::min(rtt_base, p.second);
+  // GCC follows u with a lag of about a period.
+  const double u_eff = 0.5 * (last_trade_off_ + u_before);
+  v4_history_.push_back({u_eff, period.bitrate_bps, period.tput_bps,
+                         static_cast<double>(period.rtt_ms - rtt_base), low});
+  while (static_cast<int>(v4_history_.size()) > options_.v4_hist)
+    v4_history_.pop_front();
+  const TradeOffDecisionV4 d =
+      DecideTradeOffV4(v4_history_, u_before, options_.v4_umin,
+                       options_.v4_umax, options_.v4_median);
+
+  // The snapshot of the decision, for the offline replay.
+  rtc::StringBuilder sb;
+  sb << "TigasMortiseV4 at_ms=" << at_time.ms() << " u=" << Num(u_before)
+     << " cp=" << (cp_detected_ ? 1 : 0) << " mode=" << d.mode
+     << " u_pref=" << Num(d.u_pref) << " ratio=" << Num(d.ratio)
+     << " q_stand=" << Num(d.q_stand) << " w=" << Num(d.w)
+     << " rtt_base=" << rtt_base << " low=" << (low ? 1 : 0)
+     << " since_fall=" << std::min(v4_since_fall_, 9999) << " hist_u=";
+  for (size_t i = 0; i < v4_history_.size(); ++i)
+    sb << (i ? ";" : "") << Num(v4_history_[i].u);
+  sb << " hist_b=";
+  for (size_t i = 0; i < v4_history_.size(); ++i)
+    sb << (i ? ";" : "") << v4_history_[i].bitrate_bps;
+  sb << " hist_t=";
+  for (size_t i = 0; i < v4_history_.size(); ++i)
+    sb << (i ? ";" : "") << v4_history_[i].tput_bps;
+  sb << " hist_q=";
+  for (size_t i = 0; i < v4_history_.size(); ++i)
+    sb << (i ? ";" : "") << Num(v4_history_[i].q_ms);
+  sb << " hist_low=";
+  for (size_t i = 0; i < v4_history_.size(); ++i)
+    sb << (i ? ";" : "") << (v4_history_[i].low ? 1 : 0);
+  RTC_LOG(LS_INFO) << sb.str();
+
+  last_trade_off_ = cur_trade_off_;
+  std::string branch;
+  double u;
+  if (cp_detected_) {
+    // A change point: go to the target and keep only this period.
+    u = d.u_pref;
+    while (v4_history_.size() > 1)
+      v4_history_.pop_front();
+    cp_detected_ = false;
+    branch = "v4_cp";
+  } else {
+    u = options_.v4_sigma * d.u_pref + (1.0 - options_.v4_sigma) * u_before;
+    branch = std::string("v4_") + d.mode;
+    // The queue of a lower u shows only in a period or two, and a falling
+    // least R hides it.
+    if (u < u_before && ((options_.v4_hold && low) ||
+                         v4_since_fall_ < options_.v4_wait)) {
+      u = u_before;
+      branch = "v4_hold";
+    }
+  }
+  cur_trade_off_ = std::min(options_.v4_umax, std::max(options_.v4_umin, u));
+  if (cur_trade_off_ < u_before)
+    v4_since_fall_ = 0;
+  else if (v4_since_fall_ < std::numeric_limits<int>::max())
+    ++v4_since_fall_;
+  Log(branch.c_str(), at_time, u_before, &period);
+  return cur_trade_off_ != u_before;
 }
 
 void TradeOffControl::Log(const char* branch,
