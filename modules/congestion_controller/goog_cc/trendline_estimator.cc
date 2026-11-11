@@ -27,6 +27,7 @@
 #include "api/network_state_predictor.h"
 #include "modules/remote_bitrate_estimator/test/bwe_test_logging.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/experiments/field_trial_parser.h"
 #include "rtc_base/experiments/struct_parameters_parser.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/numerics/safe_minmax.h"
@@ -39,6 +40,7 @@ namespace {
 // Parameters for linear least squares fit of regression line to noisy data.
 constexpr double kDefaultTrendlineSmoothingCoeff = 0.9;
 constexpr double kDefaultTrendlineThresholdGain = 4.0;
+constexpr char kTigasDetectorExperiment[] = "WebRTC-Tigas-Detector";
 const char kBweWindowSizeInPacketsExperiment[] =
     "WebRTC-BweWindowSizeInPackets";
 
@@ -116,6 +118,16 @@ constexpr double kMaxAdaptOffsetMs = 15.0;
 constexpr double kOverUsingTimeThreshold = 10;
 constexpr int kMinNumDeltas = 60;
 constexpr int kDeltaCounterMax = 1000;
+constexpr double kDefaultWindowMs = 100;
+
+// TIGAS: one WebRTC-Tigas-Detector parameter, or its default.
+double ReadDetector(const FieldTrialsView* key_value_config,
+                    const char* key,
+                    double default_value) {
+  FieldTrialParameter<double> value(key, default_value);
+  ParseFieldTrial({&value}, key_value_config->Lookup(kTigasDetectorExperiment));
+  return value.Get();
+}
 
 }  // namespace
 
@@ -171,7 +183,12 @@ TrendlineEstimator::TrendlineEstimator(
     NetworkStatePredictor* network_state_predictor)
     : settings_(key_value_config),
       smoothing_coef_(kDefaultTrendlineSmoothingCoeff),
-      threshold_gain_(kDefaultTrendlineThresholdGain),
+      threshold_gain_(ReadDetector(key_value_config,
+                                   "gain",
+                                   kDefaultTrendlineThresholdGain)),
+      base_window_ms_(
+          ReadDetector(key_value_config, "window_ms", kDefaultWindowMs)),
+      window_ms_(base_window_ms_),
       num_of_deltas_(0),
       first_arrival_time_ms_(-1),
       accumulated_delay_(0),
@@ -179,7 +196,10 @@ TrendlineEstimator::TrendlineEstimator(
       delay_hist_(),
       k_up_(0.0087),
       k_down_(0.039),
-      overusing_time_threshold_(kOverUsingTimeThreshold),
+      base_overuse_ms_(ReadDetector(key_value_config,
+                                    "overuse_ms",
+                                    kOverUsingTimeThreshold)),
+      overusing_time_threshold_(base_overuse_ms_),
       threshold_(12.5),
       prev_modified_trend_(NAN),
       last_update_ms_(-1),
@@ -195,9 +215,30 @@ TrendlineEstimator::TrendlineEstimator(
       << settings_.Parser()->Encode() << " and "
       << (network_state_predictor_ ? "injected" : "no")
       << " network state predictor";
+  RTC_LOG(LS_INFO) << "TigasDetector gain=" << threshold_gain_
+                   << " window_ms=" << window_ms_
+                   << " overuse_ms=" << overusing_time_threshold_;
 }
 
 TrendlineEstimator::~TrendlineEstimator() {}
+
+void TrendlineEstimator::SetTigasDetector(double share,
+                                          double overuse_ms,
+                                          double window_ms) {
+  const double overuse =
+      overuse_ms > 0.0
+          ? base_overuse_ms_ + share * (overuse_ms - base_overuse_ms_)
+          : overusing_time_threshold_;
+  const double window =
+      window_ms > 0.0 ? base_window_ms_ + share * (window_ms - base_window_ms_)
+                      : window_ms_;
+  if (overuse == overusing_time_threshold_ && window == window_ms_)
+    return;
+  overusing_time_threshold_ = overuse;
+  window_ms_ = window;
+  RTC_LOG(LS_INFO) << "TigasDetector set share=" << share
+                   << " overuse_ms=" << overuse << " window_ms=" << window;
+}
 
 void TrendlineEstimator::UpdateTrendline(double recv_delta_ms,
                                          double send_delta_ms,
@@ -237,7 +278,7 @@ void TrendlineEstimator::UpdateTrendline(double recv_delta_ms,
   double duration = last_arrival_time - first_arrival_time;
   // if (delay_hist_.size() > settings_.window_size)
   //   delay_hist_.pop_front();
-  int MaxDuration = 100;
+  const double MaxDuration = window_ms_;
   bool dofit = false;
   while (duration > MaxDuration && delay_hist_.size() > 2){
     dofit = true;

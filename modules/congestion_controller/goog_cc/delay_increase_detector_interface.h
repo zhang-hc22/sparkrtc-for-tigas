@@ -40,6 +40,13 @@ class DelayIncreaseDetectorInterface {
   virtual BandwidthUsage State() const = 0;
 
   virtual double AggresiveState() const = 0;
+
+  // TIGAS: Mortise's det_* options. Moves the overuse time and the time
+  // window of the slope fit from their configured values toward overuse_ms
+  // and window_ms by share (0 to 1); a value of 0 is left alone.
+  virtual void SetTigasDetector(double share,
+                                double overuse_ms,
+                                double window_ms) {}
 };
 
 }  // namespace webrtc

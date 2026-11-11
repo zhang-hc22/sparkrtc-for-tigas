@@ -35,6 +35,7 @@ constexpr double kDefaultBackoffFactor = 0.85;
 
 constexpr char kBweBackOffFactorExperiment[] = "WebRTC-BweBackOffFactor";
 constexpr char kTigasMortiseExperiment[] = "WebRTC-Tigas-Mortise";
+constexpr char kTigasDetectorExperiment[] = "WebRTC-Tigas-Detector";
 
 double ReadBackoffFactor(const FieldTrialsView& key_value_config) {
   std::string experiment_string =
@@ -84,7 +85,8 @@ AimdRateControl::AimdRateControl(const FieldTrialsView& key_value_config,
       subtract_additional_backoff_term_(!key_value_config.IsDisabled(
           "WebRTC-Bwe-SubtractAdditionalBackoffTerm")),
       mortise_(send_side && key_value_config.IsEnabled(kTigasMortiseExperiment)
-                   ? std::make_unique<TradeOffControl>()
+                   ? std::make_unique<TradeOffControl>(TradeOffOptions::Parse(
+                         key_value_config.Lookup(kTigasMortiseExperiment)))
                    : nullptr) {
   ParseFieldTrial(
       {&disable_estimate_bounded_increase_,
@@ -96,7 +98,12 @@ AimdRateControl::AimdRateControl(const FieldTrialsView& key_value_config,
   RTC_LOG(LS_INFO) << "Using aimd rate control with back off factor " << beta_;
   RTC_LOG(LS_INFO) << "TigasAimdIncrease ai " << additive_increase_scale_.Get()
                    << " mi " << multiplicative_increase_factor_.Get();
+  ParseFieldTrial({&underuse_hold_},
+                  key_value_config.Lookup(kTigasDetectorExperiment));
   RTC_LOG(LS_INFO) << "TigasMortise enabled=" << MortiseEnabled()
+                   << " send_side=" << send_side << " trial="
+                   << key_value_config.Lookup(kTigasMortiseExperiment);
+  RTC_LOG(LS_INFO) << "TigasDetector underuse_hold=" << underuse_hold_.Get()
                    << " send_side=" << send_side;
 }
 
@@ -162,6 +169,17 @@ void AimdRateControl::UpdateNetworkEstimate(TimeDelta rtt,
                                             DataRate throughput) {
   if (mortise_)
     mortise_->UpdateTradeOffEstimate(rtt, throughput);
+}
+
+bool AimdRateControl::MortiseDetector(double* share,
+                                      double* overuse_ms,
+                                      double* window_ms) const {
+  if (!mortise_ || !mortise_->options().Detector())
+    return false;
+  *share = mortise_->DetectorShare();
+  *overuse_ms = mortise_->options().det_overuse_ms;
+  *window_ms = mortise_->options().det_window_ms;
+  return true;
 }
 
 DataRate AimdRateControl::Update(const RateControlInput& input,
@@ -432,6 +450,14 @@ void AimdRateControl::ChangeState(const RateControlInput& input,
       }
       break;
     case BandwidthUsage::kBwUnderusing:
+      // TIGAS: without underuse_hold, as kBwNormal.
+      if (!underuse_hold_.Get()) {
+        if (rate_control_state_ == RateControlState::kRcHold) {
+          time_last_bitrate_change_ = at_time;
+          rate_control_state_ = RateControlState::kRcIncrease;
+        }
+        break;
+      }
       rate_control_state_ = RateControlState::kRcHold;
       break;
     default:

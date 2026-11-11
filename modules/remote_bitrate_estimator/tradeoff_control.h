@@ -17,6 +17,12 @@
  *  dividing by zero, the time before the first decrease is checked with
  *  IsFinite() instead of taking ms() of minus infinity, and one TigasMortise
  *  line is logged per period instead of the per-update warnings.
+ *
+ *  TradeOffOptions are experiment options on top of this, read from
+ *  WebRTC-Tigas-Mortise/Enabled,fixed_u:..,umin_rq:..,probe:..,
+ *  det_overuse_ms:..,det_window_ms:../. With none
+ *  set the controller is mortise_v1, the one of 920865ec29. mortise_v2
+ *  (tigas_sender --mortise=v2) is umin_rq:1,probe:0.1,det_overuse_ms:100.
  */
 
 #ifndef MODULES_REMOTE_BITRATE_ESTIMATOR_TRADEOFF_CONTROL_H_
@@ -25,6 +31,9 @@
 #include <stdint.h>
 
 #include <deque>
+#include <utility>
+
+#include "absl/strings/string_view.h"
 
 #include "api/units/data_rate.h"
 #include "api/units/time_delta.h"
@@ -32,9 +41,34 @@
 
 namespace webrtc {
 
+struct TradeOffOptions {
+  // In [0, 1]: u stays at this value from the first update on and the rules
+  // do not run; the periods are still logged (branch fixed).
+  double fixed_u = -1.0;
+  // Below 1.7 Mbit/s, u_min from R_q = R - (the least R of the periods in the
+  // last 10 s) instead of R, so that it does not depend on the path RTT or
+  // the receiver's feedback interval.
+  bool umin_rq = false;
+  // Above 0: when no rule moves u and u equals u_last, move u by this step,
+  // up if u is at most u_min + 0.01, else down (branches probe_up,
+  // probe_down), so that the rule has a change to compare next period.
+  double probe = 0.0;
+  // Above 0: GCC's overuse detector takes this overuse time and this time
+  // window of the slope fit (ms) for u <= 0.8, its configured values at
+  // u = 1, linear in between (DetectorShare).
+  double det_overuse_ms = 0.0;
+  double det_window_ms = 0.0;
+
+  static TradeOffOptions Parse(absl::string_view trial);
+  bool Detector() const { return det_overuse_ms > 0.0 || det_window_ms > 0.0; }
+  bool Any() const {
+    return fixed_u >= 0.0 || umin_rq || probe > 0.0 || Detector();
+  }
+};
+
 class TradeOffControl {
  public:
-  TradeOffControl();
+  explicit TradeOffControl(const TradeOffOptions& options = TradeOffOptions());
 
   // One feedback: its largest feedback_time - send_time and the acknowledged
   // bitrate.
@@ -49,6 +83,10 @@ class TradeOffControl {
   void GetQoeLambda();
   // Called before each AIMD update. Returns true if the trade-off changed.
   bool UpdateTradeoff(Timestamp at_time);
+  const TradeOffOptions& options() const { return options_; }
+  // How far the detector moves from its configured values to the det_*
+  // options at the current u: min(1, (1 - u) / 0.2).
+  double DetectorShare() const;
 
  private:
   enum class TradeoffProbingState {
@@ -64,13 +102,20 @@ class TradeOffControl {
     double qoe;
     double last_qoe;
     double min_delta;
+    // umin_rq only: the least R of the periods in the last 10 s.
+    int64_t rtt_min_ms;
   };
+
+  // Closes the period at at_time into period, or returns the skip branch.
+  const char* ClosePeriod(Timestamp at_time, Period* period);
+  bool UpdateFixed(Timestamp at_time);
 
   void Log(const char* branch,
            Timestamp at_time,
            double u_before,
            const Period* period) const;
 
+  const TradeOffOptions options_;
   TradeoffProbingState tradeoff_state_;
   Timestamp time_last_decrease_bitrate_;
   Timestamp time_last_change_tradeoff_;
@@ -86,6 +131,8 @@ class TradeOffControl {
   std::deque<int64_t> network_rtts_;
   std::deque<int64_t> target_bitrates_;
   std::deque<int64_t> network_tputs_;
+  // umin_rq: (end of period, R) of the periods in the last 10 s.
+  std::deque<std::pair<Timestamp, int64_t>> period_rtts_;
 };
 
 }  // namespace webrtc

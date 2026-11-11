@@ -72,6 +72,11 @@ class AimdRateControl {
   // One transport feedback for Mortise: its largest feedback_time - send_time
   // and the acknowledged bitrate.
   void UpdateNetworkEstimate(TimeDelta rtt, DataRate throughput);
+  // With Mortise's det_* options: the share for the current u and the two
+  // values of the options (TradeOffOptions); false without them.
+  bool MortiseDetector(double* share,
+                       double* overuse_ms,
+                       double* window_ms) const;
 
  private:
   enum class RateControlState { kRcHold, kRcIncrease, kRcDecrease };
@@ -122,6 +127,9 @@ class AimdRateControl {
   // the per-second factor of the multiplicative increase.
   FieldTrialParameter<double> additive_increase_scale_{"ai", 1.0};
   FieldTrialParameter<double> multiplicative_increase_factor_{"mi", 1.08};
+  // TIGAS: WebRTC-Tigas-Detector/underuse_hold:false/ takes an underuse as
+  // normal (the rate increases) instead of holding the rate.
+  FieldTrialParameter<bool> underuse_hold_{"underuse_hold", true};
   // TIGAS: with WebRTC-Tigas-Mortise, Mortise sets beta_, the
   // multiplicative increase in place of mi, and a scale of the additive
   // increase applied before its 4 kbit/s floor, as 8b09a04 does

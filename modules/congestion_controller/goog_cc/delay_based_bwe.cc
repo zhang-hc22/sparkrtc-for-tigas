@@ -132,6 +132,13 @@ DelayBasedBwe::Result DelayBasedBwe::IncomingPacketFeedbackVector(
     }
     rate_control_.UpdateNetworkEstimate(max_feedback_rtt, *acked_bitrate);
   }
+  // TIGAS: Mortise's det_* options set the overuse detector from u.
+  double detector_share, detector_overuse_ms, detector_window_ms;
+  if (rate_control_.MortiseDetector(&detector_share, &detector_overuse_ms,
+                                    &detector_window_ms)) {
+    active_delay_detector_->SetTigasDetector(
+        detector_share, detector_overuse_ms, detector_window_ms);
+  }
   for (const auto& packet_feedback : packet_feedback_vector) {
     delayed_feedback = false;
     IncomingPacketFeedback(packet_feedback, msg.feedback_time);
